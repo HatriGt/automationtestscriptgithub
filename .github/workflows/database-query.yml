@@ -22,13 +22,12 @@ jobs:
         python -m pip install --upgrade pip
         pip install mysql-connector-python pandas sshtunnel paramiko
         
-    - name: Create SSH key
-      env:
-        SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+    - name: Setup SSH
       run: |
         mkdir -p ~/.ssh
-        echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
         chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
         
     - name: Run script
       env:
@@ -38,4 +37,9 @@ jobs:
         DB_NAME: ${{ secrets.DB_NAME }}
         SSH_HOST: ${{ secrets.SSH_HOST }}
         SSH_USER: ${{ secrets.SSH_USER }}
-      run: python script.py
+      run: |
+        # Debug SSH connection
+        echo "Testing SSH connection..."
+        ssh -v -i ~/.ssh/id_rsa ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} exit
+        echo "Running main script..."
+        python script.py
