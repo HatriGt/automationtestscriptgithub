@@ -15,11 +15,11 @@ logging.basicConfig(
 # Database configuration from environment variables
 DB_CONFIG = {
     'ssh_host': os.environ.get('SSH_HOST'),
-    'ssh_username': os.environ.get('SSH_USER'),
-    'mysql_host': os.environ.get('DB_HOST'),
-    'mysql_user': os.environ.get('DB_USER'),
-    'mysql_password': os.environ.get('DB_PASSWORD'),
-    'mysql_database': os.environ.get('DB_NAME')
+    'ssh_username': os.environ.get('SSH_USERNAME'),
+    'mysql_host': os.environ.get('MYSQL_HOST'),
+    'mysql_user': os.environ.get('MYSQL_USER'),
+    'mysql_password': os.environ.get('MYSQL_PASSWORD'),
+    'mysql_database': os.environ.get('MYSQL_DATABASE')
 }
 
 def execute_query():
@@ -33,6 +33,9 @@ def execute_query():
         print(f"Using SSH key from: {ssh_key_path}")
         if not os.path.exists(ssh_key_path):
             raise Exception(f"SSH key not found at {ssh_key_path}")
+            
+        # Print SSH key permissions
+        print(f"SSH key permissions: {oct(os.stat(ssh_key_path).st_mode)[-3:]}")
         
         with SSHTunnelForwarder(
             (DB_CONFIG['ssh_host'], 22),

@@ -31,15 +31,14 @@ jobs:
         
     - name: Run script
       env:
-        DB_HOST: ${{ secrets.DB_HOST }}
-        DB_USER: ${{ secrets.DB_USER }}
-        DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-        DB_NAME: ${{ secrets.DB_NAME }}
+        DB_HOST: ${{ secrets.MYSQL_HOST }}
+        DB_USER: ${{ secrets.MYSQL_USER }}
+        DB_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+        DB_NAME: ${{ secrets.MYSQL_DATABASE }}
         SSH_HOST: ${{ secrets.SSH_HOST }}
-        SSH_USER: ${{ secrets.SSH_USER }}
+        SSH_USER: ${{ secrets.SSH_USERNAME }}
       run: |
-        # Debug SSH connection
         echo "Testing SSH connection..."
-        ssh -v -i ~/.ssh/id_rsa ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} exit
+        ssh -v -i ~/.ssh/id_rsa ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} exit
         echo "Running main script..."
         python script.py
