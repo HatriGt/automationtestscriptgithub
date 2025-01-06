@@ -12,6 +12,14 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
+# Print all environment variables (excluding sensitive values)
+print("Environment variables available:")
+for key in os.environ:
+    if any(sensitive in key.lower() for sensitive in ['password', 'key', 'secret']):
+        print(f"{key}: [MASKED]")
+    else:
+        print(f"{key}: {os.environ[key]}")
+
 # Database configuration from environment variables
 DB_CONFIG = {
     'ssh_host': os.environ.get('SSH_HOST'),
@@ -23,18 +31,25 @@ DB_CONFIG = {
 }
 
 def execute_query():
+    # Validate environment variables
+    required_vars = ['SSH_HOST', 'SSH_USERNAME', 'MYSQL_HOST', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE']
+    missing_vars = [var for var in required_vars if not os.environ.get(var)]
+    
+    if missing_vars:
+        raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+    
     try:
         print(f"Starting query execution at {datetime.now()}")
         print(f"Using SSH host: {DB_CONFIG['ssh_host']}")
         print(f"Using SSH username: {DB_CONFIG['ssh_username']}")
+        print(f"Using MySQL host: {DB_CONFIG['mysql_host']}")
         
-        # Add logging for SSH key
         ssh_key_path = os.path.expanduser('~/.ssh/id_rsa')
         print(f"Using SSH key from: {ssh_key_path}")
+        
         if not os.path.exists(ssh_key_path):
             raise Exception(f"SSH key not found at {ssh_key_path}")
             
-        # Print SSH key permissions
         print(f"SSH key permissions: {oct(os.stat(ssh_key_path).st_mode)[-3:]}")
         
         with SSHTunnelForwarder(
@@ -47,7 +62,7 @@ def execute_query():
         ) as tunnel:
             print(f"SSH tunnel established on local port {tunnel.local_bind_port}")
             
-            time.sleep(3)  # Wait for tunnel to be ready
+            time.sleep(3)
             
             print("Connecting to database...")
             try:
@@ -61,7 +76,6 @@ def execute_query():
                 
                 print("Database connection established")
                 
-                # Execute your queries here
                 query = """
                 SELECT 
                    * FROM countries
@@ -70,7 +84,6 @@ def execute_query():
                 print("\nExecuting main query...")
                 df = pd.read_sql_query(query, connection)
                 
-                # Save results to CSV
                 output_file = f'query_results_{datetime.now().strftime("%Y%m%d")}.csv'
                 df.to_csv(output_file, index=False)
                 print(f"Results saved to {output_file}")
