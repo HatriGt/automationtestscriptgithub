@@ -7,8 +7,10 @@ import logging
 from datetime import datetime
 
 # Enable debug logging
-logging.basicConfig(level=logging.DEBUG)
-logging.getLogger('paramiko').setLevel(logging.DEBUG)
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 # Database configuration from environment variables
 DB_CONFIG = {
@@ -23,13 +25,22 @@ DB_CONFIG = {
 def execute_query():
     try:
         print(f"Starting query execution at {datetime.now()}")
+        print(f"Using SSH host: {DB_CONFIG['ssh_host']}")
+        print(f"Using SSH username: {DB_CONFIG['ssh_username']}")
+        
+        # Add logging for SSH key
+        ssh_key_path = os.path.expanduser('~/.ssh/id_rsa')
+        print(f"Using SSH key from: {ssh_key_path}")
+        if not os.path.exists(ssh_key_path):
+            raise Exception(f"SSH key not found at {ssh_key_path}")
         
         with SSHTunnelForwarder(
             (DB_CONFIG['ssh_host'], 22),
             ssh_username=DB_CONFIG['ssh_username'],
-            ssh_pkey='~/.ssh/id_rsa',
+            ssh_pkey=ssh_key_path,
             remote_bind_address=(DB_CONFIG['mysql_host'], 3306),
-            local_bind_address=('127.0.0.1', 3307)
+            local_bind_address=('127.0.0.1', 3307),
+            set_keepalive=60
         ) as tunnel:
             print(f"SSH tunnel established on local port {tunnel.local_bind_port}")
             
