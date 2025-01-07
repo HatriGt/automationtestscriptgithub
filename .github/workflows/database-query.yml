@@ -8,7 +8,7 @@ on:
 jobs:
   run-script:
     runs-on: ubuntu-latest
-    timeout-minutes: 10  # Add timeout to prevent hanging
+    timeout-minutes: 10
     
     steps:
     - uses: actions/checkout@v3
@@ -21,18 +21,27 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install mysql-connector-python pandas sshtunnel paramiko
+        pip install mysql-connector-python pandas paramiko
+        sudo apt-get install -y netcat
         
     - name: Setup SSH
       env:
         SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
       run: |
+        # Setup SSH directory
         mkdir -p ~/.ssh
         chmod 700 ~/.ssh
+        
+        # Write the SSH key
         echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
         chmod 600 ~/.ssh/id_rsa
-        # Test SSH key validity
-        ssh-keygen -l -f ~/.ssh/id_rsa || (echo "Invalid SSH key" && exit 1)
+        
+        # Add host key
+        ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+        chmod 600 ~/.ssh/known_hosts
+        
+        # Test SSH config
+        ssh -o "StrictHostKeyChecking=no" -T ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} exit
         
     - name: Run script
       env:
@@ -43,17 +52,8 @@ jobs:
         SSH_HOST: ${{ secrets.SSH_HOST }}
         SSH_USERNAME: ${{ secrets.SSH_USERNAME }}
       run: |
-        # Kill any existing SSH processes
-        pkill -9 ssh || true
+        echo "Testing SSH connection..."
+        ssh -v ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo Connected successfully"
         
-        # Clear any existing known_hosts
-        rm -f ~/.ssh/known_hosts
-        
-        # Add host key
-        ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
-        
-        # Test SSH connection first
-        timeout 10 ssh -v -o BatchMode=yes -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} exit
-        
-        echo "Running main script..."
+        echo "Starting main script..."
         python script.py
