@@ -2,7 +2,7 @@ name: Weekly Report Generation
 
 on:
   schedule:
-    - cron: '0 1 * * MON'  # Runs every Monday at 1 AM UTC
+    - cron: '0 4 * * 1-5'  # Runs every weekday (Mon-Fri) at 8 AM UAE time (4 AM UTC)
   workflow_dispatch:        # Allows manual trigger
 
 jobs:
