@@ -16,6 +16,7 @@ class DatabaseTunnel:
     def __init__(self, ssh_host, ssh_user, ssh_key_path, remote_host, remote_port=3306, local_port=3307):
         self.ssh_client = None
         self.transport = None
+        self.forward_channel = None
         self.ssh_host = ssh_host
         self.ssh_user = ssh_user
         self.ssh_key_path = ssh_key_path
@@ -35,17 +36,29 @@ class DatabaseTunnel:
                 self.ssh_host,
                 username=self.ssh_user,
                 key_filename=self.ssh_key_path,
-                timeout=10
+                timeout=10,
+                allow_agent=False,
+                look_for_keys=False
             )
             
-            # Set up the tunnel
-            logger.info("Setting up port forwarding...")
+            # Get transport
             self.transport = self.ssh_client.get_transport()
-            self.transport.set_keepalive(5)  # Send keepalive every 5 seconds
+            self.transport.set_keepalive(5)
             
-            # Direct port forward
-            self.transport.request_port_forward('127.0.0.1', self.local_port, self.remote_host, self.remote_port)
+            # Create a direct-tcpip channel
+            logger.info(f"Creating direct TCP/IP channel to {self.remote_host}:{self.remote_port}")
+            dest_addr = (self.remote_host, self.remote_port)
+            local_addr = ('127.0.0.1', self.local_port)
+            self.forward_channel = self.transport.open_channel(
+                "direct-tcpip", 
+                dest_addr,
+                local_addr
+            )
             
+            if self.forward_channel is None:
+                raise Exception("Failed to open forward channel")
+            
+            logger.info("Port forwarding established")
             return self
             
         except Exception as e:
@@ -57,11 +70,9 @@ class DatabaseTunnel:
         self.close()
     
     def close(self):
-        if self.transport:
-            try:
-                self.transport.cancel_port_forward('127.0.0.1', self.local_port)
-            except:
-                pass
+        if self.forward_channel and not self.forward_channel.closed:
+            self.forward_channel.close()
+        if self.transport and self.transport.is_active():
             self.transport.close()
         if self.ssh_client:
             self.ssh_client.close()
@@ -79,8 +90,8 @@ def execute_query():
         }
         
         ssh_key_path = os.path.expanduser('~/.ssh/id_rsa')
+        logger.info("Starting database connection...")
         
-        logger.info("Starting database tunnel...")
         with DatabaseTunnel(
             ssh_host=config['ssh_host'],
             ssh_user=config['ssh_user'],
@@ -89,7 +100,7 @@ def execute_query():
         ) as tunnel:
             
             logger.info("Tunnel established, connecting to database...")
-            # Short delay to ensure port forwarding is ready
+            # Short delay to ensure channel is ready
             time.sleep(2)
             
             # Connect to MySQL through the tunnel
@@ -102,7 +113,7 @@ def execute_query():
                 connection_timeout=10
             )
             
-            logger.info("Database connected, executing query...")
+            logger.info("Connected to database, executing query...")
             query = "SELECT * FROM countries"
             df = pd.read_sql_query(query, connection)
             
@@ -113,9 +124,6 @@ def execute_query():
             connection.close()
             logger.info("Database connection closed")
             
-    except KeyboardInterrupt:
-        logger.info("Operation cancelled by user")
-        raise
     except Exception as e:
         logger.error(f"Error: {str(e)}")
         raise
