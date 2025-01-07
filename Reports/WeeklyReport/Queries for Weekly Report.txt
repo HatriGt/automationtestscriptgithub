@@ -1,0 +1,549 @@
+Query 1 : to fill parameters Total Orders,Successful Orders,Rejected Orders,Rejected Orders %
+
+
+
+SELECT 
+    p.Parameters,
+    CASE 
+        WHEN p.Parameters = 'Rejected Orders %' THEN 
+            ROUND(
+                (SUM(CASE 
+                    WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 1 WEEK) 
+                    AND DATE_SUB(CURDATE(), INTERVAL 1 DAY) 
+                    AND ord.status = 2
+                    THEN p.is_counted 
+                    ELSE 0 
+                END) * 100.0) /
+                NULLIF(SUM(CASE 
+                    WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 1 WEEK) 
+                    AND DATE_SUB(CURDATE(), INTERVAL 1 DAY) 
+                    THEN p.is_counted 
+                    ELSE 0 
+                END), 0), 2)
+        ELSE 
+            SUM(CASE 
+                WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 1 WEEK) 
+                AND DATE_SUB(CURDATE(), INTERVAL 1 DAY) 
+                THEN p.is_counted 
+                ELSE 0 
+            END)
+    END as 'Week (Previous)',
+    CASE 
+        WHEN p.Parameters = 'Rejected Orders %' THEN 
+            ROUND(
+                (SUM(CASE 
+                    WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+                    AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+                    AND ord.status = 2
+                    THEN p.is_counted 
+                    ELSE 0 
+                END) * 100.0) /
+                NULLIF(SUM(CASE 
+                    WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+                    AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+                    THEN p.is_counted 
+                    ELSE 0 
+                END), 0), 2)
+        ELSE 
+            SUM(CASE 
+                WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+                AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+                THEN p.is_counted 
+                ELSE 0 
+            END)
+    END as 'Week (Previous to Previous)',
+    ROUND(
+        CASE 
+            WHEN p.Parameters = 'Rejected Orders %' THEN 
+                (
+                    ROUND(
+                        (SUM(CASE 
+                            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 1 WEEK) 
+                            AND DATE_SUB(CURDATE(), INTERVAL 1 DAY) 
+                            AND ord.status = 2
+                            THEN p.is_counted 
+                            ELSE 0 
+                        END) * 100.0) /
+                        NULLIF(SUM(CASE 
+                            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 1 WEEK) 
+                            AND DATE_SUB(CURDATE(), INTERVAL 1 DAY) 
+                            THEN p.is_counted 
+                            ELSE 0 
+                        END), 0), 2) -
+                    ROUND(
+                        (SUM(CASE 
+                            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+                            AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+                            AND ord.status = 2
+                            THEN p.is_counted 
+                            ELSE 0 
+                        END) * 100.0) /
+                        NULLIF(SUM(CASE 
+                            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+                            AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+                            THEN p.is_counted 
+                            ELSE 0 
+                        END), 0), 2)
+                )
+            ELSE 
+                ((SUM(CASE 
+                    WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 1 WEEK) 
+                    AND DATE_SUB(CURDATE(), INTERVAL 1 DAY) 
+                    THEN p.is_counted 
+                    ELSE 0 
+                END) - 
+                SUM(CASE 
+                    WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+                    AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+                    THEN p.is_counted 
+                    ELSE 0 
+                END)) / 
+                NULLIF(SUM(CASE 
+                    WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+                    AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+                    THEN p.is_counted 
+                    ELSE 0 
+                END), 0) * 100)
+        END, 2) as 'Growth/Degrowth %'
+FROM order_master ord
+JOIN restaurants r ON r.id = ord.branch_id
+LEFT JOIN rest_account_manager ram on ram.restaurant_id =r.id and ram.status=1
+CROSS JOIN (
+    SELECT 'Total Orders' as Parameters, 1 as is_counted, NULL as status_check
+    UNION ALL SELECT 'Successful Orders', 1, 1
+    UNION ALL SELECT 'Rejected Orders', 1, 2
+    UNION ALL SELECT 'Rejected Orders %', 1, NULL
+) p
+WHERE DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+    AND DATE_SUB(CURDATE(), INTERVAL 1 DAY)
+    AND ord.source = 'smiles'
+    AND ram.agent_name in ('adarsh','sagun','simrahashraf','raghav','nihad','waseem')
+    AND (p.status_check IS NULL OR ord.status = p.status_check)
+GROUP BY p.Parameters
+ORDER BY 
+    CASE p.Parameters
+        WHEN 'Total Orders' THEN 1
+        WHEN 'Successful Orders' THEN 2
+        WHEN 'Rejected Orders' THEN 3
+        WHEN 'Rejected Orders %' THEN 4
+    END;
+
+
+----------------------------------------------------------------------------------------------------
+
+Query 2 : To fill parameters Total  Sales,Net Sales
+
+SELECT 
+    p.Parameters,
+    CASE WHEN p.Parameters = 'Total Sales' THEN
+        SUM(CASE 
+            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 1 WEEK) 
+            AND DATE_SUB(CURDATE(), INTERVAL 1 DAY) 
+            THEN ord.total_amount 
+            ELSE 0 
+        END)
+    ELSE
+        SUM(CASE 
+            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 1 WEEK) 
+            AND DATE_SUB(CURDATE(), INTERVAL 1 DAY) 
+            THEN (ord.total_amount - 
+                 COALESCE(CASE WHEN trans.sponsored = 1 THEN trans.disc_amount ELSE 0 END) -
+                 COALESCE(CASE WHEN trans.sponsored = 3 THEN ROUND((trans.rest_cofund_perc * trans.disc_amount) / 100, 2) ELSE 0 END) -
+                 (ord.total_amount * ord.disc_perc / 100))
+            ELSE 0 
+        END)
+    END as 'Week (Previous)',
+    CASE WHEN p.Parameters = 'Total Sales' THEN
+        SUM(CASE 
+            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+            AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+            THEN ord.total_amount 
+            ELSE 0 
+        END)
+    ELSE
+        SUM(CASE 
+            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+            AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+            THEN (ord.total_amount - 
+                 COALESCE(CASE WHEN trans.sponsored = 1 THEN trans.disc_amount ELSE 0 END) -
+                 COALESCE(CASE WHEN trans.sponsored = 3 THEN ROUND((trans.rest_cofund_perc * trans.disc_amount) / 100, 2) ELSE 0 END) -
+                 (ord.total_amount * ord.disc_perc / 100))
+            ELSE 0 
+        END)
+    END as 'Week (Previous to Previous)',
+    ROUND(
+        CASE WHEN p.Parameters IN ('Total Sales', 'Net Sales') THEN
+            ((CASE WHEN p.Parameters = 'Total Sales' THEN
+                SUM(CASE 
+                    WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 1 WEEK) 
+                    AND DATE_SUB(CURDATE(), INTERVAL 1 DAY) 
+                    THEN ord.total_amount 
+                    ELSE 0 
+                END)
+              ELSE
+                SUM(CASE 
+                    WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 1 WEEK) 
+                    AND DATE_SUB(CURDATE(), INTERVAL 1 DAY) 
+                    THEN (ord.total_amount - 
+                         COALESCE(CASE WHEN trans.sponsored = 1 THEN trans.disc_amount ELSE 0 END) -
+                         COALESCE(CASE WHEN trans.sponsored = 3 THEN ROUND((trans.rest_cofund_perc * trans.disc_amount) / 100, 2) ELSE 0 END) -
+                         (ord.total_amount * ord.disc_perc / 100))
+                    ELSE 0 
+                END)
+              END -
+              CASE WHEN p.Parameters = 'Total Sales' THEN
+                SUM(CASE 
+                    WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+                    AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+                    THEN ord.total_amount 
+                    ELSE 0 
+                END)
+              ELSE
+                SUM(CASE 
+                    WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+                    AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+                    THEN (ord.total_amount - 
+                         COALESCE(CASE WHEN trans.sponsored = 1 THEN trans.disc_amount ELSE 0 END) -
+                         COALESCE(CASE WHEN trans.sponsored = 3 THEN ROUND((trans.rest_cofund_perc * trans.disc_amount) / 100, 2) ELSE 0 END) -
+                         (ord.total_amount * ord.disc_perc / 100))
+                    ELSE 0 
+                END)
+              END) /
+            NULLIF(CASE WHEN p.Parameters = 'Total Sales' THEN
+                SUM(CASE 
+                    WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+                    AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+                    THEN ord.total_amount 
+                    ELSE 0 
+                END)
+              ELSE
+                SUM(CASE 
+                    WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+                    AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+                    THEN (ord.total_amount - 
+                         COALESCE(CASE WHEN trans.sponsored = 1 THEN trans.disc_amount ELSE 0 END) -
+                         COALESCE(CASE WHEN trans.sponsored = 3 THEN ROUND((trans.rest_cofund_perc * trans.disc_amount) / 100, 2) ELSE 0 END) -
+                         (ord.total_amount * ord.disc_perc / 100))
+                    ELSE 0 
+                END)
+              END, 0) * 100)
+        END, 2) as 'Growth/Degrowth %'
+FROM order_master ord
+JOIN restaurants r ON r.id = ord.branch_id
+LEFT JOIN rest_account_manager ram on ram.restaurant_id =r.id and ram.status=1
+LEFT JOIN mamba_discount_coupon_transactions trans ON trans.id = ord.coupon_trn_id
+CROSS JOIN (
+    SELECT 'Total Sales' as Parameters
+    UNION ALL SELECT 'Net Sales'
+) p
+WHERE DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+    AND DATE_SUB(CURDATE(), INTERVAL 1 DAY)
+    AND ord.source = 'smiles'
+    AND ram.agent_name in ('adarsh','sagun','simrahashraf','raghav','nihad','waseem') 
+GROUP BY p.Parameters
+ORDER BY 
+    CASE p.Parameters
+        WHEN 'Total Sales' THEN 1
+        WHEN 'Net Sales' THEN 2
+    END;
+
+----------------------------------------------------------------------------------------------------------------------------------
+
+Query 3 : To fill Commissions , Payment Gateway
+
+SELECT 
+    prev_week.total_logistic AS 'Previous Week Commission',
+    prev_to_prev_week.total_logistic AS 'Previous to Previous Week Commission',
+    ROUND(((prev_week.total_logistic - prev_to_prev_week.total_logistic) / prev_to_prev_week.total_logistic) * 100, 2) AS 'Commission Growth%',
+    prev_week.total_gateway AS 'Previous Week Gateway',
+    prev_to_prev_week.total_gateway AS 'Previous to Previous Week Gateway',
+    ROUND(((prev_week.total_gateway - prev_to_prev_week.total_gateway) / prev_to_prev_week.total_gateway) * 100, 2) AS 'Gateway Growth%'
+FROM (
+    SELECT 
+        SUM(logistic_commission) as total_logistic,
+        SUM(gateway_fee) as total_gateway
+    FROM account_manager_report_daily amrd 
+    INNER JOIN restaurants rest ON rest.id = amrd.rest_id 
+    LEFT JOIN rest_account_manager ram on ram.restaurant_id=rest.id and ram.status=1
+    WHERE DATE(amrd.created_at) BETWEEN 
+        DATE_SUB(CURRENT_DATE, INTERVAL 7 DAY) AND 
+        DATE_SUB(CURRENT_DATE, INTERVAL 1 DAY)
+        AND ram.agent_name in ('adarsh','sagun','simrahashraf','raghav','nihad','waseem')
+) prev_week,
+(
+    SELECT 
+        SUM(logistic_commission) as total_logistic,
+        SUM(gateway_fee) as total_gateway
+    FROM account_manager_report_daily amrd 
+    INNER JOIN restaurants rest ON rest.id = amrd.rest_id 
+    LEFT JOIN rest_account_manager ram on ram.restaurant_id=rest.id and ram.status=1
+    WHERE DATE(amrd.created_at) BETWEEN 
+        DATE_SUB(CURRENT_DATE, INTERVAL 14 DAY) AND 
+        DATE_SUB(CURRENT_DATE, INTERVAL 8 DAY)
+        AND ram.agent_name in ('adarsh','sagun','simrahashraf','raghav','nihad','waseem')
+) prev_to_prev_week;
+
+
+-------------------------------------------------------------------------------------------------------------------------------------------
+
+Query 4 : To fill Order Frequency
+
+SELECT 
+    p.Parameters,
+    ROUND(
+        COUNT(DISTINCT CASE 
+            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 1 WEEK) 
+            AND DATE_SUB(CURDATE(), INTERVAL 1 DAY) 
+            THEN ord.id 
+            ELSE NULL 
+        END) / 
+        NULLIF(COUNT(DISTINCT CASE 
+            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 1 WEEK) 
+            AND DATE_SUB(CURDATE(), INTERVAL 1 DAY) 
+            THEN ord.user_id 
+            ELSE NULL 
+        END), 0), 2) as 'Week (Previous)',
+    ROUND(
+        COUNT(DISTINCT CASE 
+            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+            AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+            THEN ord.id 
+            ELSE NULL 
+        END) / 
+        NULLIF(COUNT(DISTINCT CASE 
+            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+            AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+            THEN ord.user_id 
+            ELSE NULL 
+        END), 0), 2) as 'Week (Previous to Previous)',
+    ROUND(
+        (((COUNT(DISTINCT CASE 
+            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 1 WEEK) 
+            AND DATE_SUB(CURDATE(), INTERVAL 1 DAY) 
+            THEN ord.id 
+            ELSE NULL 
+        END) / 
+        NULLIF(COUNT(DISTINCT CASE 
+            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 1 WEEK) 
+            AND DATE_SUB(CURDATE(), INTERVAL 1 DAY) 
+            THEN ord.user_id 
+            ELSE NULL 
+        END), 0)) - 
+        (COUNT(DISTINCT CASE 
+            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+            AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+            THEN ord.id 
+            ELSE NULL 
+        END) / 
+        NULLIF(COUNT(DISTINCT CASE 
+            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+            AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+            THEN ord.user_id 
+            ELSE NULL 
+        END), 0))) / 
+        NULLIF((COUNT(DISTINCT CASE 
+            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+            AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+            THEN ord.id 
+            ELSE NULL 
+        END) / 
+        NULLIF(COUNT(DISTINCT CASE 
+            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+            AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+            THEN ord.user_id 
+            ELSE NULL 
+        END), 0)), 0) * 100), 2) as 'Growth/Degrowth %'
+FROM order_master ord
+JOIN restaurants r ON r.id = ord.branch_id
+LEFT JOIN rest_account_manager ram on ram.restaurant_id=r.id and ram.status=1
+CROSS JOIN (
+    SELECT 'Order Frequency' as Parameters
+) p
+WHERE DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+    AND DATE_SUB(CURDATE(), INTERVAL 1 DAY)
+    AND ord.source = 'smiles'
+    AND ram.agent_name in ('adarsh','sagun','simrahashraf','raghav','nihad','waseem')
+GROUP BY p.Parameters;
+
+
+---------------------------------------------------------------------------------------------------
+
+Query 5 : To fill Smiles Subscription Orders
+
+SELECT 
+    'Smiles Subscription Orders' as Parameters,
+    COUNT(DISTINCT CASE 
+        WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 1 WEEK) 
+        AND DATE_SUB(CURDATE(), INTERVAL 1 DAY) 
+        THEN mfst.order_id
+    END) as 'Week (Previous)',
+    COUNT(DISTINCT CASE 
+        WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+        AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+        THEN mfst.order_id
+    END) as 'Week (Previous to Previous)',
+    ROUND(
+        ((COUNT(DISTINCT CASE 
+            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 1 WEEK) 
+            AND DATE_SUB(CURDATE(), INTERVAL 1 DAY) 
+            THEN mfst.order_id
+        END) - 
+        COUNT(DISTINCT CASE 
+            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+            AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+            THEN mfst.order_id
+        END)) / 
+        NULLIF(COUNT(DISTINCT CASE 
+            WHEN DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+            AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) 
+            THEN mfst.order_id
+        END), 0) * 100), 2) as 'Growth/Degrowth %'
+FROM mamba_food_subscription_transactions mfst 
+INNER JOIN order_master ord ON ord.id = mfst.order_id 
+INNER JOIN restaurants rest ON rest.id = ord.branch_id 
+LEFT JOIN rest_account_manager ram on ram.restaurant_id=rest.id and ram.status=1
+WHERE DATE(ord.created_date) BETWEEN DATE_SUB(CURDATE(), INTERVAL 2 WEEK) 
+    AND DATE_SUB(CURDATE(), INTERVAL 1 DAY)
+    AND ram.agent_name in ('adarsh','sagun','simrahashraf','raghav','nihad','waseem')
+    AND ord.source = 'smiles';
+-------------------------------------------------------------------------------------------------------
+
+Query 6 : To fill New Customer Count and New Customer Order Count
+
+SELECT 
+    CONCAT(
+        DATE_FORMAT(DATE_SUB(DATE(om.created_date), INTERVAL WEEKDAY(om.created_date) DAY), '%Y-%m-%d'),
+        ' to ',
+        DATE_FORMAT(DATE_ADD(DATE_SUB(DATE(om.created_date), INTERVAL WEEKDAY(om.created_date) DAY), INTERVAL 6 DAY), '%Y-%m-%d')
+    ) as week_range,
+    COUNT(DISTINCT 
+        CASE WHEN NOT EXISTS (
+            SELECT 1 
+            FROM order_master om2
+            WHERE om2.user_id = om.user_id
+            AND DATE(om2.created_date) BETWEEN DATE_SUB(DATE(om.created_date), INTERVAL 90 DAY)
+                                          AND DATE_SUB(DATE(om.created_date), INTERVAL 1 DAY)
+        ) THEN om.user_id END
+    ) as weekly_new_customers
+FROM order_master om
+JOIN restaurants rest ON rest.id = om.branch_id
+LEFT JOIN rest_account_manager ram ON ram.restaurant_id = rest.id AND ram.status = 1
+WHERE DATE(om.created_date) BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY) 
+                                AND DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+AND ram.agent_name IN ('adarsh','sagun','simrahashraf','raghav','nihad','waseem') 
+AND om.source = 'smiles'
+GROUP BY DATE_SUB(DATE(om.created_date), INTERVAL WEEKDAY(om.created_date) DAY)
+ORDER BY week_range;
+
+----------------------------------------------------------------------------------------------------------------
+
+Query 7 : To fill Repeat Customer Count
+
+SELECT 
+    CONCAT(
+        DATE_FORMAT(DATE_SUB(MIN(order_date), INTERVAL WEEKDAY(MIN(order_date)) DAY), '%Y-%m-%d'),
+        ' to ',
+        DATE_FORMAT(DATE_ADD(DATE_SUB(MIN(order_date), INTERVAL WEEKDAY(MIN(order_date)) DAY), INTERVAL 6 DAY), '%Y-%m-%d')
+    ) as week_range,
+    SUM(daily_old_customers) as weekly_old_customers
+FROM (
+    SELECT 
+        DATE(om.created_date) as order_date,
+        COUNT(DISTINCT 
+            CASE WHEN EXISTS (
+                SELECT 1 
+                FROM order_master om2
+                WHERE om2.user_id = om.user_id
+                AND DATE(om2.created_date) BETWEEN DATE_SUB(DATE(om.created_date), INTERVAL 90 DAY)
+                                              AND DATE_SUB(DATE(om.created_date), INTERVAL 1 DAY)
+            ) THEN om.user_id END
+        ) as daily_old_customers
+    FROM order_master om
+    JOIN restaurants rest ON rest.id = om.branch_id
+    LEFT JOIN rest_account_manager ram ON ram.restaurant_id = rest.id AND ram.status = 1
+    WHERE DATE(om.created_date) BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY) 
+                                    AND DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+    AND ram.agent_name IN ('adarsh','sagun','simrahashraf','raghav','nihad','waseem')
+    AND om.source = 'smiles'
+    GROUP BY DATE(om.created_date)
+) daily_counts
+GROUP BY DATE_SUB(order_date, INTERVAL WEEKDAY(order_date) DAY)
+ORDER BY week_range;
+
+
+--------------------------------------------------------------------------------------------------------------------------
+
+Query 8 : To fill Repeat Customer Order Count
+
+SELECT 
+    CONCAT(
+        DATE_FORMAT(DATE_SUB(MIN(order_date), INTERVAL WEEKDAY(MIN(order_date)) DAY), '%Y-%m-%d'),
+        ' to ',
+        DATE_FORMAT(DATE_ADD(DATE_SUB(MIN(order_date), INTERVAL WEEKDAY(MIN(order_date)) DAY), INTERVAL 6 DAY), '%Y-%m-%d')
+    ) as week_range,
+    SUM(daily_old_orders) as weekly_old_orders
+FROM (
+    SELECT 
+        DATE(om.created_date) as order_date,
+        COUNT(DISTINCT 
+            CASE WHEN EXISTS (
+                SELECT 1 
+                FROM order_master om2
+                WHERE om2.user_id = om.user_id
+                AND DATE(om2.created_date) BETWEEN DATE_SUB(DATE(om.created_date), INTERVAL 90 DAY)
+                                              AND DATE_SUB(DATE(om.created_date), INTERVAL 1 DAY)
+            ) THEN om.id END
+        ) as daily_old_orders
+    FROM order_master om
+    JOIN restaurants rest ON rest.id = om.branch_id
+    LEFT JOIN rest_account_manager ram ON ram.restaurant_id = rest.id AND ram.status = 1
+    WHERE DATE(om.created_date) BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY) 
+                                    AND DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+    AND ram.agent_name IN ('adarsh','sagun','simrahashraf','raghav','nihad','waseem')
+    AND om.source = 'smiles'
+    GROUP BY DATE(om.created_date)
+) daily_counts
+GROUP BY DATE_SUB(order_date, INTERVAL WEEKDAY(order_date) DAY)
+ORDER BY week_range;
+
+---------------------------------------------------------------------------------------------------------------------------------------
+
+Query 9 : To fill No Discount Orders,Restaurant Sponsored Orders,Smiles Sponsored Orders,Co-fund orders,Flat Discount
+
+SELECT 
+    CONCAT(
+        DATE_FORMAT(DATE_SUB(DATE(ord.created_date), INTERVAL WEEKDAY(DATE(ord.created_date)) DAY), '%Y-%m-%d'),
+        ' to ',
+        DATE_FORMAT(DATE_ADD(DATE_SUB(DATE(ord.created_date), INTERVAL WEEKDAY(DATE(ord.created_date)) DAY), INTERVAL 6 DAY), '%Y-%m-%d')
+    ) as week_range,
+    COUNT(DISTINCT ord.id) as TotalOrders,
+    COUNT(DISTINCT CASE WHEN trans.sponsored = 1 THEN ord.id END) as Rest_sponsored_Orders,
+    COUNT(DISTINCT CASE WHEN trans.sponsored = 0 THEN ord.id END) as Smiles_Sponsored_Orders,
+    COUNT(DISTINCT CASE WHEN trans.sponsored = 3 THEN ord.id END) AS Cofund_Orders,
+    COUNT(DISTINCT CASE WHEN ord.disc_perc > 0 AND ord.coupon_trn_id = 0 THEN ord.id END) AS Flat_Discount_Orders,
+    COUNT(DISTINCT CASE WHEN ord.disc_perc = 0 AND ord.coupon_trn_id = 0 THEN ord.id END) AS No_Discount_Orders
+FROM
+    order_master ord 
+    JOIN restaurants rest ON rest.id = ord.branch_id
+    LEFT JOIN rest_account_manager ram ON ram.restaurant_id = rest.id AND ram.status = 1
+    LEFT JOIN mamba_discount_coupon_transactions trans ON trans.id = ord.coupon_trn_id
+WHERE 
+    DATE(ord.created_date) BETWEEN 
+        DATE_SUB(DATE_SUB(CURRENT_DATE, INTERVAL WEEKDAY(CURRENT_DATE) DAY), INTERVAL 2 WEEK) 
+    AND 
+        DATE_SUB(DATE_SUB(CURRENT_DATE, INTERVAL WEEKDAY(CURRENT_DATE) DAY), INTERVAL 1 DAY)
+    AND ord.source = 'smiles' 
+    AND ram.agent_name IN ('adarsh','sagun','simrahashraf','raghav','nihad','waseem')
+GROUP BY 
+    DATE_SUB(DATE(ord.created_date), INTERVAL WEEKDAY(DATE(ord.created_date)) DAY)
+ORDER BY 
+    week_range DESC;
+
+
+
+
+
+
+
+
+
