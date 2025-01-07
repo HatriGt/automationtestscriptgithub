@@ -13,6 +13,7 @@ import traceback
 import time
 import openpyxl.styles
 import subprocess
+import concurrent.futures
 
 # Set up logging with timestamp in filename
 current_time = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -270,16 +271,17 @@ class ReportGenerator:
             logger.info(f"Starting to process region: {region}")
             logger.info(f"Number of queries to process: {len(queries)}")
             
-            for query_name, query in queries.items():
-                logger.info(f"Processing query '{query_name}' for region '{region}'...")
+            def execute_single_query(query_tuple):
+                query_name, query = query_tuple
                 max_retries = 3
                 retry_count = 0
                 
                 while retry_count < max_retries:
                     try:
-                        results[query_name] = self.execute_query(query, region)
+                        logger.info(f"Processing query '{query_name}' for region '{region}'...")
+                        result = self.execute_query(query, region)
                         logger.info(f"Successfully completed query '{query_name}' for region '{region}'")
-                        break
+                        return query_name, result
                     except Exception as e:
                         retry_count += 1
                         logger.error(f"Attempt {retry_count} failed for query '{query_name}' in region '{region}': {str(e)}")
@@ -287,6 +289,24 @@ class ReportGenerator:
                             raise
                         time.sleep(5)  # Wait before retry
                 
+            # Execute queries in parallel using ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                # Submit all queries for execution
+                future_to_query = {
+                    executor.submit(execute_single_query, (query_name, query)): query_name 
+                    for query_name, query in queries.items()
+                }
+                
+                # Collect results as they complete
+                for future in concurrent.futures.as_completed(future_to_query):
+                    query_name = future_to_query[future]
+                    try:
+                        query_name, result = future.result()
+                        results[query_name] = result
+                    except Exception as e:
+                        logger.error(f"Query '{query_name}' failed for region '{region}': {str(e)}")
+                        raise
+            
             logger.info(f"Completed processing all queries for region: {region}")
             return region, results
         except Exception as e:
