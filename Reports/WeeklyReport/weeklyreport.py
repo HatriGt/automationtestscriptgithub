@@ -31,11 +31,6 @@ logging.basicConfig(
     ]
 )
 
-# Set MySQL connector logging
-mysql_logger = logging.getLogger('mysql.connector')
-mysql_logger.setLevel(logging.DEBUG)
-mysql_logger.addHandler(logging.FileHandler('mysql_debug.log'))
-
 logger = logging.getLogger(__name__)
 
 class ReportGenerator:
@@ -71,14 +66,17 @@ class ReportGenerator:
                 time.sleep(2)
 
     def create_ssh_tunnel(self):
+        """Create SSH tunnel for database connection"""
         if self.ssh_tunnel is None or not self.ssh_tunnel.is_active:
             try:
                 logger.info("Creating SSH tunnel...")
+                # Create SSH tunnel using environment variables
                 self.ssh_tunnel = SSHTunnelForwarder(
-                    (self.db_config['ssh_host'], 22),
-                    ssh_username=self.db_config['ssh_username'],
-                    ssh_pkey=self.db_config['ssh_pkey_path'],
-                    remote_bind_address=(self.db_config['mysql_host'], 3306)
+                    (os.environ['SSH_HOST'], 22),
+                    ssh_username=os.environ['SSH_USERNAME'],
+                    ssh_pkey=os.environ.get('SSH_PRIVATE_KEY_PATH', '~/.ssh/id_rsa'),
+                    remote_bind_address=(os.environ['MYSQL_HOST'], 3306),
+                    local_bind_address=('127.0.0.1', 3307)  # Use specific local port
                 )
                 self.ssh_tunnel.start()
                 logger.info(f"SSH tunnel created successfully on local port {self.ssh_tunnel.local_bind_port}")
@@ -87,50 +85,41 @@ class ReportGenerator:
                 logger.error(traceback.format_exc())
                 raise
 
-        return self.ssh_tunnel
-
     def get_db_connection(self) -> mysql.connector.connection.MySQLConnection:
+        """Get database connection through SSH tunnel"""
         try:
             if not self.ssh_tunnel or not self.ssh_tunnel.is_active:
                 logger.error("SSH tunnel is not active")
                 self._init_ssh_tunnel()
             
             logger.info("Attempting to establish database connection...")
-            logger.info(f"Connection parameters: host=127.0.0.1, port={self.ssh_tunnel.local_bind_port}")
             
-            # Use only supported connection parameters
+            # Use environment variables for connection
             conn = mysql.connector.connect(
                 host='127.0.0.1',
                 port=self.ssh_tunnel.local_bind_port,
-                user=self.db_config['mysql_user'],
-                password=self.db_config['mysql_password'],
-                database=self.db_config['mysql_database'],
-                connect_timeout=30,  # Only keep this timeout
-                use_pure=True,      # Use pure Python implementation
-                buffered=True       # Use buffered cursors
+                user=os.environ['MYSQL_USER'],
+                password=os.environ['MYSQL_PASSWORD'],
+                database=os.environ['MYSQL_DATABASE'],
+                connect_timeout=30
             )
             
-            # Test the connection with timeout
-            try:
-                cursor = conn.cursor(buffered=True)
-                cursor.execute("SELECT 1")
-                result = cursor.fetchone()
-                cursor.close()
-                if result != (1,):
-                    raise Exception("Connection test failed")
-                logger.info("Database connection established and tested successfully")
-                return conn
-            except Exception as e:
-                logger.error(f"Connection test failed: {str(e)}")
-                if conn:
-                    conn.close()
-                raise
+            # Test the connection
+            cursor = conn.cursor(buffered=True)
+            cursor.execute("SELECT 1")
+            result = cursor.fetchone()
+            cursor.close()
+            
+            if result != (1,):
+                raise Exception("Connection test failed")
+                
+            logger.info("Database connection established and tested successfully")
+            return conn
             
         except mysql.connector.Error as e:
             logger.error(f"MySQL connection error: {str(e)}")
             logger.error(f"Error code: {e.errno if hasattr(e, 'errno') else 'N/A'}")
             logger.error(f"SQLSTATE: {e.sqlstate if hasattr(e, 'sqlstate') else 'N/A'}")
-            logger.error(f"Error message: {e.msg if hasattr(e, 'msg') else str(e)}")
             raise
         except Exception as e:
             logger.error(f"Unexpected error in database connection: {str(e)}")
@@ -654,74 +643,48 @@ def main():
         if not os.access(template_path, os.R_OK):
             raise PermissionError(f"No read permission for template file: {template_path}")
         
-        # Database configuration with SSH tunnel details
+        # Database configuration from environment variables
         db_config = {
-            'ssh_host': '3.28.83.127',
-            'ssh_username': 'ubuntu',
-            'ssh_pkey_path': r"C:\Users\madhu\OneDrive\Documents\Madhu\DB connectivity details\key.pem",
-            'mysql_host': 'eateasily-prod-db.cluster-cory5tgqvyh7.me-central-1.rds.amazonaws.com',
-            'mysql_user': 'developer_ro',
-            'mysql_password': 'E@tEasy5&$#FDs',
-            'mysql_database': 'eateasily'
+            'ssh_host': os.environ['SSH_HOST'],
+            'ssh_username': os.environ['SSH_USERNAME'],
+            'mysql_host': os.environ['MYSQL_HOST'],
+            'mysql_user': os.environ['MYSQL_USER'],
+            'mysql_password': os.environ['MYSQL_PASSWORD'],
+            'mysql_database': os.environ['MYSQL_DATABASE']
         }
         
-        # Check if query file exists
+        # Initialize report generator
+        generator = ReportGenerator(db_config)
+        
+        # Read and parse queries
         query_file_path = 'Queries for Weekly Report.txt'
         if not os.path.exists(query_file_path):
             raise FileNotFoundError(f"Query file not found: {query_file_path}")
         
-        logger.info("Reading query file...")
         with open(query_file_path, 'r', encoding='utf-8') as file:
             content = file.read()
             
-        # Initialize report generator before parsing queries
-        logger.info("Initializing report generator...")
-        generator = ReportGenerator(db_config)
-        
-        # Parse queries using the generator instance
-        logger.info("Parsing queries...")
+        # Parse queries and generate report
         queries = generator.parse_queries(content)
         
-        logger.info(f"Successfully parsed {len(queries)} queries")
-        for name in queries.keys():
-            logger.info(f"Found query: {name}")
-            logger.debug(f"Query content length: {len(queries[name])}")
-        
-        # Process each region and collect results
+        # Process regions and generate report
         results = {}
         for region in generator.regions:
             try:
-                logger.info(f"Starting processing for region: {region}")
+                logger.info(f"Processing region: {region}")
                 region_result, region_data = generator.process_region(region, queries)
                 results[region] = region_data
                 logger.info(f"Successfully processed region: {region}")
             except Exception as e:
                 logger.error(f"Failed to process region {region}: {str(e)}")
                 raise
-
-        # Verify results before updating Excel
-        logger.info("\nVerifying results before Excel update:")
-        logger.info(f"Number of regions processed: {len(results)}")
         
-        if not results:
-            raise ValueError("No results to process - results dictionary is empty")
-        
-        for region, data in results.items():
-            logger.info(f"\nRegion: {region}")
-            logger.info(f"Number of queries: {len(data)}")
-            for query_name, df in data.items():
-                logger.info(f"Query: {query_name}")
-                logger.info(f"Data shape: {df.shape if isinstance(df, pd.DataFrame) else 'Not a DataFrame'}")
-                if isinstance(df, pd.DataFrame):
-                    logger.info(f"First few rows: \n{df.head().to_string()}")
-
-        # Update the Excel template with results
-        logger.info(f"\nStarting Excel template update with {len(results)} regions")
+        # Update Excel template with results
         generator.update_excel_template(template_path, results)
-        logger.info("Excel template update completed successfully")
+        logger.info("Weekly report generation completed successfully")
         
     except Exception as e:
-        logger.error("Error during results verification and Excel update")
+        logger.error("Error during weekly report generation")
         logger.error(str(e))
         logger.error(traceback.format_exc())
         raise
