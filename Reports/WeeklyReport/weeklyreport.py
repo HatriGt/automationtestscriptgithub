@@ -4,7 +4,6 @@ from concurrent.futures import ThreadPoolExecutor
 import openpyxl
 from typing import Dict, List
 import re
-from sshtunnel import SSHTunnelForwarder
 import paramiko
 import logging
 import os
@@ -13,6 +12,7 @@ from datetime import datetime
 import traceback
 import time
 import openpyxl.styles
+import subprocess
 
 # Set up logging with timestamp in filename
 current_time = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -33,6 +33,28 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+def setup_tunnel():
+    """Set up SSH tunnel using system SSH command"""
+    ssh_host = os.environ['SSH_HOST']
+    ssh_user = os.environ['SSH_USERNAME']
+    mysql_host = os.environ['MYSQL_HOST']
+    
+    # Build SSH command
+    cmd = f"ssh -v -N -L 3307:{mysql_host}:3306 {ssh_user}@{ssh_host}"
+    
+    logger.info(f"Starting SSH tunnel with command: {cmd}")
+    
+    # Start tunnel in background
+    process = subprocess.Popen(
+        cmd.split(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    
+    # Wait a bit for tunnel to establish
+    time.sleep(5)
+    return process
+
 class ReportGenerator:
     def __init__(self, db_config: Dict):
         self.db_config = db_config
@@ -42,21 +64,21 @@ class ReportGenerator:
             'Sharjah': ['taiba', 'sahbhan', 'akef', 'aaftab'],
             'KAM': ['musir', 'sparsh', 'sourabh', 'tariq']
         }
-        self.ssh_tunnel = None
-        self._init_ssh_tunnel()
+        self.tunnel_process = None
+        self._init_tunnel()
 
-    def _init_ssh_tunnel(self):
+    def _init_tunnel(self):
         """Initialize SSH tunnel with retries"""
         max_retries = 3
         retry_count = 0
         while retry_count < max_retries:
             try:
                 logger.info(f"Attempting to create SSH tunnel (attempt {retry_count + 1}/{max_retries})")
-                self.create_ssh_tunnel()
-                if self.ssh_tunnel and self.ssh_tunnel.is_active:
+                self.tunnel_process = setup_tunnel()
+                if self.tunnel_process.poll() is None:
                     logger.info("SSH tunnel successfully created and active")
                     break
-                logger.warning("SSH tunnel created but not active")
+                logger.warning("SSH tunnel process failed")
             except Exception as e:
                 retry_count += 1
                 if retry_count == max_retries:
@@ -65,43 +87,23 @@ class ReportGenerator:
                 logger.warning(f"SSH tunnel creation failed, retrying... Error: {str(e)}")
                 time.sleep(2)
 
-    def create_ssh_tunnel(self):
-        """Create SSH tunnel for database connection"""
-        if self.ssh_tunnel is None or not self.ssh_tunnel.is_active:
-            try:
-                logger.info("Creating SSH tunnel...")
-                # Create SSH tunnel using environment variables
-                self.ssh_tunnel = SSHTunnelForwarder(
-                    (os.environ['SSH_HOST'], 22),
-                    ssh_username=os.environ['SSH_USERNAME'],
-                    ssh_pkey=os.environ.get('SSH_PRIVATE_KEY_PATH', '~/.ssh/id_rsa'),
-                    remote_bind_address=(os.environ['MYSQL_HOST'], 3306),
-                    local_bind_address=('127.0.0.1', 3307)  # Use specific local port
-                )
-                self.ssh_tunnel.start()
-                logger.info(f"SSH tunnel created successfully on local port {self.ssh_tunnel.local_bind_port}")
-            except Exception as e:
-                logger.error(f"Error creating SSH tunnel: {str(e)}")
-                logger.error(traceback.format_exc())
-                raise
-
     def get_db_connection(self) -> mysql.connector.connection.MySQLConnection:
         """Get database connection through SSH tunnel"""
         try:
-            if not self.ssh_tunnel or not self.ssh_tunnel.is_active:
+            if self.tunnel_process is None or self.tunnel_process.poll() is not None:
                 logger.error("SSH tunnel is not active")
-                self._init_ssh_tunnel()
+                self._init_tunnel()
             
             logger.info("Attempting to establish database connection...")
             
             # Use environment variables for connection
             conn = mysql.connector.connect(
                 host='127.0.0.1',
-                port=self.ssh_tunnel.local_bind_port,
+                port=3307,
                 user=os.environ['MYSQL_USER'],
                 password=os.environ['MYSQL_PASSWORD'],
                 database=os.environ['MYSQL_DATABASE'],
-                connect_timeout=30
+                connection_timeout=10
             )
             
             # Test the connection
@@ -125,6 +127,21 @@ class ReportGenerator:
             logger.error(f"Unexpected error in database connection: {str(e)}")
             logger.error(traceback.format_exc())
             raise
+
+    def __del__(self):
+        """Cleanup method to ensure tunnel process is terminated"""
+        if self.tunnel_process:
+            try:
+                self.tunnel_process.terminate()
+                self.tunnel_process.wait(timeout=5)
+                logger.info("SSH tunnel terminated")
+            except Exception as e:
+                logger.error(f"Error terminating SSH tunnel: {str(e)}")
+                try:
+                    self.tunnel_process.kill()
+                    logger.info("SSH tunnel force killed")
+                except:
+                    pass
 
     def validate_excel_template(self, template_path: str) -> None:
         """Validate Excel template existence and structure"""
