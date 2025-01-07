@@ -1,137 +1,126 @@
 import mysql.connector
-from sshtunnel import SSHTunnelForwarder
+import paramiko
 import pandas as pd
 import os
 import time
 import logging
-import socket
-from datetime import datetime
 import sys
+from datetime import datetime
+import socket
+import select
 
-# Enable debug logging with more detail
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    stream=sys.stdout
-)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Specifically enable paramiko logging
-logging.getLogger('paramiko').setLevel(logging.DEBUG)
-
-def is_port_in_use(port, host='127.0.0.1'):
-    """Check if a port is already in use"""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        return s.connect_ex((host, port)) == 0
-
-def wait_for_port(port, host='127.0.0.1', timeout=30):
-    """Wait until a port starts accepting TCP connections"""
-    start_time = time.time()
-    while True:
-        if time.time() - start_time >= timeout:
-            return False
+class DatabaseTunnel:
+    def __init__(self, ssh_host, ssh_user, ssh_key_path, remote_host, remote_port=3306, local_port=3307):
+        self.ssh_client = None
+        self.transport = None
+        self.ssh_host = ssh_host
+        self.ssh_user = ssh_user
+        self.ssh_key_path = ssh_key_path
+        self.remote_host = remote_host
+        self.remote_port = remote_port
+        self.local_port = local_port
+        
+    def __enter__(self):
         try:
-            with socket.create_connection((host, port), timeout=1):
-                return True
-        except OSError:
-            time.sleep(0.1)
-
-def find_free_port(start_port=3307):
-    """Find a free port starting from the given port number"""
-    port = start_port
-    while is_port_in_use(port):
-        port += 1
-        if port > start_port + 100:  # Don't search indefinitely
-            raise RuntimeError("Could not find a free port")
-    return port
+            # Initialize SSH client
+            self.ssh_client = paramiko.SSHClient()
+            self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            # Connect to SSH server
+            logger.info(f"Connecting to SSH server {self.ssh_host}")
+            self.ssh_client.connect(
+                self.ssh_host,
+                username=self.ssh_user,
+                key_filename=self.ssh_key_path,
+                timeout=10
+            )
+            
+            # Set up the tunnel
+            logger.info("Setting up port forwarding...")
+            self.transport = self.ssh_client.get_transport()
+            self.transport.set_keepalive(5)  # Send keepalive every 5 seconds
+            
+            # Direct port forward
+            self.transport.request_port_forward('127.0.0.1', self.local_port, self.remote_host, self.remote_port)
+            
+            return self
+            
+        except Exception as e:
+            logger.error(f"Failed to establish tunnel: {str(e)}")
+            self.close()
+            raise
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+    
+    def close(self):
+        if self.transport:
+            try:
+                self.transport.cancel_port_forward('127.0.0.1', self.local_port)
+            except:
+                pass
+            self.transport.close()
+        if self.ssh_client:
+            self.ssh_client.close()
 
 def execute_query():
-    # Get configurations
-    config = {
-        'ssh_host': os.environ.get('SSH_HOST'),
-        'ssh_username': os.environ.get('SSH_USERNAME'),
-        'mysql_host': os.environ.get('MYSQL_HOST'),
-        'mysql_user': os.environ.get('MYSQL_USER'),
-        'mysql_password': os.environ.get('MYSQL_PASSWORD'),
-        'mysql_database': os.environ.get('MYSQL_DATABASE')
-    }
-
-    # Validate configurations
-    missing = [k for k, v in config.items() if not v]
-    if missing:
-        raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
-
-    tunnel = None
-    connection = None
-    
     try:
-        print(f"Starting execution at {datetime.now()}")
-
-        # Find an available local port
-        local_port = find_free_port()
-        print(f"Using local port: {local_port}")
-
-        # Create and start SSH tunnel
-        tunnel = SSHTunnelForwarder(
-            (config['ssh_host'], 22),
-            ssh_username=config['ssh_username'],
-            ssh_pkey=os.path.expanduser('~/.ssh/id_rsa'),
-            remote_bind_address=(config['mysql_host'], 3306),
-            local_bind_address=('127.0.0.1', local_port),
-            threaded=True  # Run in background thread
-        )
-
-        print("Starting tunnel...")
-        tunnel.daemon_forward_servers = True
-        tunnel.start()
-
-        if not tunnel.is_active:
-            raise RuntimeError("Failed to establish SSH tunnel")
-
-        print("Waiting for tunnel to be ready...")
-        if not wait_for_port(local_port):
-            raise TimeoutError("Tunnel port not responding")
-
-        print("Establishing database connection...")
-        connection = mysql.connector.connect(
-            host='127.0.0.1',
-            port=local_port,
-            user=config['mysql_user'],
-            password=config['mysql_password'],
-            database=config['mysql_database'],
-            connection_timeout=30
-        )
-
-        print("Executing query...")
-        query = "SELECT * FROM countries"
-        df = pd.read_sql_query(query, connection)
-
-        output_file = f'query_results_{datetime.now().strftime("%Y%m%d")}.csv'
-        df.to_csv(output_file, index=False)
-        print(f"Results saved to {output_file}")
-
-    except Exception as e:
-        print(f"Error occurred: {str(e)}")
-        raise
-
-    finally:
-        print("Cleaning up connections...")
-        if connection and connection.is_connected():
-            print("Closing database connection...")
-            connection.close()
-
-        if tunnel and tunnel.is_active:
-            print("Closing SSH tunnel...")
-            tunnel.stop()
-            tunnel.close()
+        # Configuration
+        config = {
+            'ssh_host': os.environ['SSH_HOST'],
+            'ssh_user': os.environ['SSH_USERNAME'],
+            'mysql_host': os.environ['MYSQL_HOST'],
+            'mysql_user': os.environ['MYSQL_USER'],
+            'mysql_pass': os.environ['MYSQL_PASSWORD'],
+            'mysql_db': os.environ['MYSQL_DATABASE']
+        }
+        
+        ssh_key_path = os.path.expanduser('~/.ssh/id_rsa')
+        
+        logger.info("Starting database tunnel...")
+        with DatabaseTunnel(
+            ssh_host=config['ssh_host'],
+            ssh_user=config['ssh_user'],
+            ssh_key_path=ssh_key_path,
+            remote_host=config['mysql_host']
+        ) as tunnel:
             
-        print("Cleanup complete")
+            logger.info("Tunnel established, connecting to database...")
+            # Short delay to ensure port forwarding is ready
+            time.sleep(2)
+            
+            # Connect to MySQL through the tunnel
+            connection = mysql.connector.connect(
+                host='127.0.0.1',
+                port=3307,
+                user=config['mysql_user'],
+                password=config['mysql_pass'],
+                database=config['mysql_db'],
+                connection_timeout=10
+            )
+            
+            logger.info("Database connected, executing query...")
+            query = "SELECT * FROM countries"
+            df = pd.read_sql_query(query, connection)
+            
+            output_file = f'query_results_{datetime.now().strftime("%Y%m%d")}.csv'
+            df.to_csv(output_file, index=False)
+            logger.info(f"Results saved to {output_file}")
+            
+            connection.close()
+            logger.info("Database connection closed")
+            
+    except KeyboardInterrupt:
+        logger.info("Operation cancelled by user")
+        raise
+    except Exception as e:
+        logger.error(f"Error: {str(e)}")
+        raise
+    finally:
+        logger.info("Cleanup complete")
 
 if __name__ == "__main__":
-    try:
-        execute_query()
-    except KeyboardInterrupt:
-        print("\nScript interrupted by user")
-        sys.exit(1)
-    except Exception as e:
-        print(f"Script failed: {str(e)}")
-        sys.exit(1)
+    execute_query()
