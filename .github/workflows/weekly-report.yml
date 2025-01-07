@@ -38,12 +38,6 @@ jobs:
         echo "Testing SSH connection..."
         ssh -o ConnectTimeout=10 -v ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo 'SSH connection successful'"
         
-    - name: Copy Template and Query Files
-      run: |
-        mkdir -p Reports/WeeklyReport
-        cp WoW_report_template.xlsx Reports/WeeklyReport/
-        cp "Reports/WeeklyReport/Queries for Weekly Report.txt" Reports/WeeklyReport/
-        
     - name: Run Weekly Report Script
       env:
         MYSQL_HOST: ${{ secrets.MYSQL_HOST }}
