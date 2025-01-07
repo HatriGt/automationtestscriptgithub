@@ -51,3 +51,10 @@ jobs:
         export GIT_SSH_COMMAND="ssh -v"
         echo "Starting main script..."
         python script.py
+        
+    - name: Upload Results
+      uses: actions/upload-artifact@v3
+      with:
+        name: query-results
+        path: query_results_*.csv
+        retention-days: 5
