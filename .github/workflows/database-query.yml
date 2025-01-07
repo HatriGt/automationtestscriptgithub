@@ -8,6 +8,7 @@ on:
 jobs:
   run-script:
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # Add timeout to prevent hanging
     
     steps:
     - uses: actions/checkout@v3
@@ -30,8 +31,8 @@ jobs:
         chmod 700 ~/.ssh
         echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
         chmod 600 ~/.ssh/id_rsa
-        eval $(ssh-agent -s)
-        ssh-add ~/.ssh/id_rsa
+        # Test SSH key validity
+        ssh-keygen -l -f ~/.ssh/id_rsa || (echo "Invalid SSH key" && exit 1)
         
     - name: Run script
       env:
@@ -42,12 +43,17 @@ jobs:
         SSH_HOST: ${{ secrets.SSH_HOST }}
         SSH_USERNAME: ${{ secrets.SSH_USERNAME }}
       run: |
-        echo "Environment variables set:"
-        echo "MYSQL_HOST is set: ${{ secrets.MYSQL_HOST != '' }}"
-        echo "MYSQL_USER is set: ${{ secrets.MYSQL_USER != '' }}"
-        echo "SSH_HOST is set: ${{ secrets.SSH_HOST != '' }}"
-        echo "SSH_USERNAME is set: ${{ secrets.SSH_USERNAME != '' }}"
-        echo "Testing SSH connection..."
+        # Kill any existing SSH processes
+        pkill -9 ssh || true
+        
+        # Clear any existing known_hosts
+        rm -f ~/.ssh/known_hosts
+        
+        # Add host key
         ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
-        echo "Starting script execution..."
+        
+        # Test SSH connection first
+        timeout 10 ssh -v -o BatchMode=yes -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} exit
+        
+        echo "Running main script..."
         python script.py
