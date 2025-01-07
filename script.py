@@ -56,11 +56,9 @@ def execute_query():
         if not os.path.exists(ssh_key_path):
             raise Exception(f"SSH key not found at {ssh_key_path}")
 
-        # Configure SSH client options
-        ssh_config = {
-            'StrictHostKeyChecking': 'no',
-            'UserKnownHostsFile': '/dev/null'
-        }
+        # Create SSH client configuration
+        ssh_client = paramiko.SSHClient()
+        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             
         server = SSHTunnelForwarder(
             (DB_CONFIG['ssh_host'], 22),
@@ -69,8 +67,7 @@ def execute_query():
             remote_bind_address=(DB_CONFIG['mysql_host'], 3306),
             local_bind_address=('127.0.0.1', 3307),
             set_keepalive=10,
-            ssh_config=ssh_config,
-            allow_agent=False
+            ssh_client=ssh_client
         )
         
         print("Starting SSH tunnel...")
