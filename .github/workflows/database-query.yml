@@ -27,9 +27,11 @@ jobs:
         SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
       run: |
         mkdir -p ~/.ssh
+        chmod 700 ~/.ssh
         echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
         chmod 600 ~/.ssh/id_rsa
-        chmod 700 ~/.ssh
+        eval $(ssh-agent -s)
+        ssh-add ~/.ssh/id_rsa
         
     - name: Run script
       env:
@@ -45,7 +47,7 @@ jobs:
         echo "MYSQL_USER is set: ${{ secrets.MYSQL_USER != '' }}"
         echo "SSH_HOST is set: ${{ secrets.SSH_HOST != '' }}"
         echo "SSH_USERNAME is set: ${{ secrets.SSH_USERNAME != '' }}"
-        echo "Testing SSH key permissions..."
-        ls -la ~/.ssh/
+        echo "Testing SSH connection..."
+        ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
         echo "Starting script execution..."
         python script.py

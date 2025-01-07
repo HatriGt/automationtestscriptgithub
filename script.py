@@ -6,7 +6,6 @@ import time
 import logging
 import socket
 from datetime import datetime
-import paramiko
 
 # Enable debug logging
 logging.basicConfig(
@@ -56,65 +55,52 @@ def execute_query():
         if not os.path.exists(ssh_key_path):
             raise Exception(f"SSH key not found at {ssh_key_path}")
 
-        # Create SSH client configuration
-        ssh_client = paramiko.SSHClient()
-        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            
-        server = SSHTunnelForwarder(
+        print("Creating SSH tunnel...")
+        with SSHTunnelForwarder(
             (DB_CONFIG['ssh_host'], 22),
             ssh_username=DB_CONFIG['ssh_username'],
             ssh_pkey=ssh_key_path,
             remote_bind_address=(DB_CONFIG['mysql_host'], 3306),
-            local_bind_address=('127.0.0.1', 3307),
-            set_keepalive=10,
-            ssh_client=ssh_client
-        )
-        
-        print("Starting SSH tunnel...")
-        server.start()
-        
-        if not wait_for_port(3307):
-            raise Exception("Timeout waiting for tunnel port")
+            local_bind_address=('127.0.0.1', 3307)
+        ) as server:
             
-        print(f"SSH tunnel established on local port {server.local_bind_port}")
-        
-        try:
+            print(f"SSH tunnel established on local port {server.local_bind_port}")
+            
+            if not wait_for_port(3307):
+                raise Exception("Timeout waiting for tunnel port")
+            
             print("Connecting to database...")
-            connection = mysql.connector.connect(
-                host='127.0.0.1',
-                port=server.local_bind_port,
-                user=DB_CONFIG['mysql_user'],
-                password=DB_CONFIG['mysql_password'],
-                database=DB_CONFIG['mysql_database'],
-                connection_timeout=30
-            )
-            
-            print("Database connection established")
-            
-            query = """
-            SELECT 
-               * FROM countries
-            """
-            
-            print("\nExecuting main query...")
-            df = pd.read_sql_query(query, connection)
-            
-            output_file = f'query_results_{datetime.now().strftime("%Y%m%d")}.csv'
-            df.to_csv(output_file, index=False)
-            print(f"Results saved to {output_file}")
-            
-            connection.close()
-            print("\nDatabase connection closed")
-            
-        except mysql.connector.Error as err:
-            print(f"Database Error: {err}")
-            raise
-        finally:
-            if server.is_active:
-                print("Closing SSH tunnel...")
-                server.stop()
-                print("SSH tunnel closed")
+            try:
+                connection = mysql.connector.connect(
+                    host='127.0.0.1',
+                    port=3307,
+                    user=DB_CONFIG['mysql_user'],
+                    password=DB_CONFIG['mysql_password'],
+                    database=DB_CONFIG['mysql_database'],
+                    connection_timeout=30
+                )
                 
+                print("Database connection established")
+                
+                query = """
+                SELECT 
+                   * FROM countries
+                """
+                
+                print("\nExecuting main query...")
+                df = pd.read_sql_query(query, connection)
+                
+                output_file = f'query_results_{datetime.now().strftime("%Y%m%d")}.csv'
+                df.to_csv(output_file, index=False)
+                print(f"Results saved to {output_file}")
+                
+                connection.close()
+                print("\nDatabase connection closed")
+                
+            except mysql.connector.Error as err:
+                print(f"Database Error: {err}")
+                raise
+                    
     except Exception as e:
         print(f"Error: {str(e)}")
         raise
