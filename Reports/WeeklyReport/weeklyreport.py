@@ -13,7 +13,6 @@ from datetime import datetime
 import traceback
 import time
 import openpyxl.styles
-from dotenv import load_dotenv
 
 # Set up logging with timestamp in filename
 current_time = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -38,8 +37,6 @@ mysql_logger.setLevel(logging.DEBUG)
 mysql_logger.addHandler(logging.FileHandler('mysql_debug.log'))
 
 logger = logging.getLogger(__name__)
-
-load_dotenv()  # Load environment variables from .env file
 
 class ReportGenerator:
     def __init__(self, db_config: Dict):
@@ -322,6 +319,7 @@ class ReportGenerator:
             raise
 
     def _process_query_results(self, worksheet, region_results, region: str):
+        """Process query results and update worksheet"""
         try:
             logger.info(f"Processing results for region: {region}")
             
@@ -335,137 +333,279 @@ class ReportGenerator:
             
             cols = column_mappings[region]
 
-            # Define segment mappings with their row ranges
-            segment_mappings = {
-                'Orders': {'start': 4, 'end': 7, 'params': [
-                    'Total Orders',
-                    'Successful Orders',
-                    'Rejected Orders',
-                    'Rejected Orders %'
-                ]},
-                'Sales': {'start': 8, 'end': 9, 'params': [
-                    'Total Sales',
-                    'Net Sales'
-                ]},
-                'Revenue': {'start': 10, 'end': 11, 'params': [
-                    'Commissions',
-                    'Payment Gateway'
-                ]},
-                'Customers': {'start': 12, 'end': 17, 'params': [
-                    'Order Frequency',
-                    'Smiles Subscription Orders',
-                    'New Customer Count',
-                    'New Customer Order Count',
-                    'Repeat Customer Count',
-                    'Repeat Customer Order Count'
-                ]},
-                'Discounts': {'start': 18, 'end': 22, 'params': [
-                    'No Discount Orders',
-                    'Restaurant Sponsored Orders',
-                    'Smiles Sponsored Orders',
-                    'Co-fund orders',
-                    'Flat Discount'
-                ]}
+            # Update header rows
+            def update_headers():
+                # Region headers (Row 1)
+                region_ranges = {
+                    'Dubai': 'C1:E1',
+                    'Abu Dhabi': 'F1:H1',
+                    'Sharjah': 'I1:K1',
+                    'KAM': 'L1:N1'
+                }
+                
+                # Unmerge all cells in header rows first
+                for row in [1, 2]:
+                    for merge_range in worksheet.merged_cells.ranges.copy():
+                        if merge_range.min_row == row:
+                            worksheet.unmerge_cells(str(merge_range))
+
+                # Set region headers and merge cells
+                for reg, cell_range in region_ranges.items():
+                    start_col, end_col = cell_range.split(':')[0][0], cell_range.split(':')[1][0]
+                    worksheet.merge_cells(cell_range)
+                    worksheet[f'{start_col}1'] = reg
+                    
+                    # Week headers (Row 2)
+                    worksheet[f'{start_col}2'] = 'Week'
+                    worksheet[f'{chr(ord(start_col) + 1)}2'] = 'Week'
+                    worksheet[f'{end_col}2'] = 'Growth/Degrowth %'
+                    
+                    # Previous headers (Row 3)
+                    worksheet[f'{start_col}3'] = '(Previous)'
+                    worksheet[f'{chr(ord(start_col) + 1)}3'] = '(Previous to Previous)'
+                    
+                    # Merge Week cells vertically in row 2-3
+                    worksheet.merge_cells(f'{start_col}2:{start_col}3')
+                    worksheet.merge_cells(f'{chr(ord(start_col) + 1)}2:{chr(ord(start_col) + 1)}3')
+                    worksheet.merge_cells(f'{end_col}2:{end_col}3')
+
+                # Apply formatting to headers
+                for row in [1, 2, 3]:
+                    for col in ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N']:
+                        cell = worksheet[f'{col}{row}']
+                        cell.alignment = openpyxl.styles.Alignment(horizontal='center', 
+                                                                 vertical='center',
+                                                                 wrap_text=True)
+                        cell.font = openpyxl.styles.Font(bold=True)
+                        cell.border = openpyxl.styles.Border(
+                            left=openpyxl.styles.Side(style='thin'),
+                            right=openpyxl.styles.Side(style='thin'),
+                            top=openpyxl.styles.Side(style='thin'),
+                            bottom=openpyxl.styles.Side(style='thin')
+                        )
+
+            # Update headers only once when processing the first region
+            if region == 'Dubai':  # Only do this for the first region
+                update_headers()
+
+            # Define row mappings for all parameters
+            row_mappings = {
+                'Orders': {
+                    'Total Orders': 4,  # Updated row numbers to start after headers
+                    'Successful Orders': 5,
+                    'Rejected Orders': 6,
+                    'Rejected Orders %': 7
+                },
+                'Sales': {
+                    'Total Sales': 8,
+                    'Net Sales': 9
+                },
+                'Revenue': {
+                    'Commissions': 10,
+                    'Payment Gateway': 11
+                },
+                'Customers': {
+                    'Order Frequency': 12,
+                    'Smiles Subscription Orders': 13,
+                    'New Customer Count': 14,
+                    'New Customer Order Count': 15,
+                    'Repeat Customer Count': 16,
+                    'Repeat Customer Order Count': 17
+                },
+                'Discounts': {
+                    'No Discount Orders': 18,
+                    'Restaurant Sponsored Orders': 19,
+                    'Smiles Sponsored Orders': 20,
+                    'Co-fund orders': 21,
+                    'Flat Discount': 22
+                }
             }
 
-            # Only update headers and segments for the first region
-            if region == 'Dubai':
-                # Update region headers
-                self.update_region_headers(worksheet)
-                
-                # Update segment headers and parameters
-                self.update_segment_headers(worksheet, segment_mappings)
-
-            # Rest of your existing code...
+            def safe_write_cell(ws, cell, value):
+                """Safely write to a cell, handling merged cells"""
+                try:
+                    # Get the master cell if this is part of a merged range
+                    cell_coord = cell
+                    for merged_range in ws.merged_cells.ranges:
+                        if cell in merged_range:
+                            cell_coord = merged_range.start_cell.coordinate
+                            break
+                    
+                    # Format numeric values
+                    if isinstance(value, (int, float)):
+                        if isinstance(value, float) and value % 1 == 0:
+                            value = int(value)
+                        elif isinstance(value, float):
+                            value = round(value, 2)
+                    
+                    # Write to the cell
+                    ws[cell_coord] = value
+                    logger.debug(f"Successfully wrote value {value} to cell {cell_coord}")
+                    
+                except Exception as e:
+                    logger.error(f"Error writing to cell {cell}: {str(e)}")
+                    raise
             
+            # Write parameter names in column B if they don't exist
+            for category, params in row_mappings.items():
+                for param_name, row in params.items():
+                    worksheet[f'B{row}'] = param_name
+
+            for query_name, df in region_results.items():
+                logger.info(f"Processing query: {query_name}")
+                
+                try:
+                    # Orders metrics
+                    if query_name == 'orders_metrics':
+                        for metric, row in row_mappings['Orders'].items():
+                            if not df.empty and metric in df['Parameters'].values:
+                                row_data = df[df['Parameters'] == metric].iloc[0]
+                                safe_write_cell(worksheet, f"{cols['data']}{row}", row_data['Week (Previous)'])
+                                safe_write_cell(worksheet, f"{cols['prev']}{row}", row_data['Week (Previous to Previous)'])
+                                safe_write_cell(worksheet, f"{cols['growth']}{row}", row_data['Growth/Degrowth %'])
+
+                    # Sales metrics
+                    elif query_name == 'sales_metrics':
+                        for metric, row in row_mappings['Sales'].items():
+                            if not df.empty and metric in df['Parameters'].values:
+                                row_data = df[df['Parameters'] == metric].iloc[0]
+                                safe_write_cell(worksheet, f"{cols['data']}{row}", row_data['Week (Previous)'])
+                                safe_write_cell(worksheet, f"{cols['prev']}{row}", row_data['Week (Previous to Previous)'])
+                                safe_write_cell(worksheet, f"{cols['growth']}{row}", row_data['Growth/Degrowth %'])
+
+                    # Commission metrics
+                    elif query_name == 'commission_metrics':
+                        if not df.empty:
+                            commission_row = row_mappings['Revenue']['Commissions']
+                            gateway_row = row_mappings['Revenue']['Payment Gateway']
+                            
+                            safe_write_cell(worksheet, f"{cols['data']}{commission_row}", df.iloc[0]['Previous Week Commission'])
+                            safe_write_cell(worksheet, f"{cols['prev']}{commission_row}", df.iloc[0]['Previous to Previous Week Commission'])
+                            safe_write_cell(worksheet, f"{cols['growth']}{commission_row}", df.iloc[0]['Commission Growth%'])
+                            
+                            safe_write_cell(worksheet, f"{cols['data']}{gateway_row}", df.iloc[0]['Previous Week Gateway'])
+                            safe_write_cell(worksheet, f"{cols['prev']}{gateway_row}", df.iloc[0]['Previous to Previous Week Gateway'])
+                            safe_write_cell(worksheet, f"{cols['growth']}{gateway_row}", df.iloc[0]['Gateway Growth%'])
+
+                    # Order Frequency
+                    elif query_name == 'order_frequency':
+                        if not df.empty:
+                            row = row_mappings['Customers']['Order Frequency']
+                            safe_write_cell(worksheet, f"{cols['data']}{row}", df.iloc[0]['Week (Previous)'])
+                            safe_write_cell(worksheet, f"{cols['prev']}{row}", df.iloc[0]['Week (Previous to Previous)'])
+                            safe_write_cell(worksheet, f"{cols['growth']}{row}", df.iloc[0]['Growth/Degrowth %'])
+
+                    # Subscription Orders
+                    elif query_name == 'subscription_orders':
+                        if not df.empty:
+                            row = row_mappings['Customers']['Smiles Subscription Orders']
+                            safe_write_cell(worksheet, f"{cols['data']}{row}", df.iloc[0]['Week (Previous)'])
+                            safe_write_cell(worksheet, f"{cols['prev']}{row}", df.iloc[0]['Week (Previous to Previous)'])
+                            safe_write_cell(worksheet, f"{cols['growth']}{row}", df.iloc[0]['Growth/Degrowth %'])
+
+                    # New Customers
+                    elif query_name == 'new_customers':
+                        if not df.empty and len(df) >= 2:
+                            try:
+                                logger.info(f"Processing new_customers for {region}")
+                                logger.info(f"DataFrame columns: {df.columns.tolist()}")
+                                logger.info(f"DataFrame data: {df.head().to_dict()}")
+                                
+                                # Get the values
+                                current_value = df.iloc[1]['weekly_new_customers']
+                                prev_value = df.iloc[0]['weekly_new_customers']
+                                
+                                # Calculate growth
+                                growth = ((float(current_value) - float(prev_value)) / float(prev_value)) * 100 if prev_value != 0 else 0
+                                growth = round(growth, 2)
+                                
+                                # Update both New Customer Count and New Customer Order Count with the same values
+                                for metric in ['New Customer Count', 'New Customer Order Count']:
+                                    row = row_mappings['Customers'][metric]
+                                    safe_write_cell(worksheet, f"{cols['data']}{row}", current_value)
+                                    safe_write_cell(worksheet, f"{cols['prev']}{row}", prev_value)
+                                    safe_write_cell(worksheet, f"{cols['growth']}{row}", growth)
+                                    
+                            except Exception as e:
+                                logger.error(f"Error processing new_customers for {region}: {str(e)}")
+                                logger.error(traceback.format_exc())
+
+                    # Repeat Customers
+                    elif query_name == 'repeat_customers':
+                        if not df.empty and len(df) >= 2:
+                            try:
+                                logger.info(f"Processing repeat_customers for {region}")
+                                
+                                # Process Repeat Customer Count
+                                current_value = df.iloc[1]['weekly_old_customers']
+                                prev_value = df.iloc[0]['weekly_old_customers']
+                                growth = ((float(current_value) - float(prev_value)) / float(prev_value)) * 100 if prev_value != 0 else 0
+                                
+                                row = row_mappings['Customers']['Repeat Customer Count']
+                                safe_write_cell(worksheet, f"{cols['data']}{row}", current_value)
+                                safe_write_cell(worksheet, f"{cols['prev']}{row}", prev_value)
+                                safe_write_cell(worksheet, f"{cols['growth']}{row}", round(growth, 2))
+                                
+                                # Process Repeat Customer Order Count
+                                if 'weekly_old_orders' in df.columns:
+                                    current_orders = df.iloc[1]['weekly_old_orders']
+                                    prev_orders = df.iloc[0]['weekly_old_orders']
+                                    orders_growth = ((float(current_orders) - float(prev_orders)) / float(prev_orders)) * 100 if prev_orders != 0 else 0
+                                    
+                                    row_orders = row_mappings['Customers']['Repeat Customer Order Count']
+                                    safe_write_cell(worksheet, f"{cols['data']}{row_orders}", current_orders)
+                                    safe_write_cell(worksheet, f"{cols['prev']}{row_orders}", prev_orders)
+                                    safe_write_cell(worksheet, f"{cols['growth']}{row_orders}", round(orders_growth, 2))
+                                    
+                            except Exception as e:
+                                logger.error(f"Error processing repeat_customers for {region}: {str(e)}")
+                                logger.error(traceback.format_exc())
+
+                    # Discount Orders
+                    elif query_name == 'discount_orders':
+                        if not df.empty:
+                            try:
+                                logger.info(f"Processing discount_orders for {region}")
+                                logger.info(f"DataFrame columns: {df.columns.tolist()}")
+                                logger.info(f"DataFrame first row: {df.iloc[0].to_dict() if len(df) > 0 else 'Empty'}")
+                                
+                                discount_mappings = {
+                                    'No_Discount_Orders': 'No Discount Orders',
+                                    'Rest_sponsored_Orders': 'Restaurant Sponsored Orders',
+                                    'Smiles_Sponsored_Orders': 'Smiles Sponsored Orders',
+                                    'Cofund_Orders': 'Co-fund orders',
+                                    'Flat_Discount_Orders': 'Flat Discount'
+                                }
+                                
+                                for df_col, param_name in discount_mappings.items():
+                                    if df_col in df.columns:
+                                        row = row_mappings['Discounts'][param_name]
+                                        current_value = df.iloc[0][df_col]
+                                        prev_value = df.iloc[1][df_col] if len(df) > 1 else 0
+                                        
+                                        safe_write_cell(worksheet, f"{cols['data']}{row}", current_value)
+                                        safe_write_cell(worksheet, f"{cols['prev']}{row}", prev_value)
+                                        
+                                        if prev_value != 0:
+                                            growth = ((float(current_value) - float(prev_value)) / float(prev_value)) * 100
+                                            safe_write_cell(worksheet, f"{cols['growth']}{row}", round(growth, 2))
+                                    else:
+                                        logger.warning(f"Column {df_col} not found in discount_orders DataFrame")
+                                        
+                            except Exception as e:
+                                logger.error(f"Error processing discount_orders for {region}: {str(e)}")
+                                logger.error(f"DataFrame info: {df.info()}")
+                                logger.error(traceback.format_exc())
+
+                except Exception as e:
+                    logger.error(f"Error processing query {query_name} for region {region}: {str(e)}")
+                    logger.error(traceback.format_exc())
+                    raise
+
         except Exception as e:
             logger.error(f"Error in _process_query_results for region {region}: {str(e)}")
             logger.error(traceback.format_exc())
             raise
-
-    def update_region_headers(self, worksheet):
-        """Update the region headers and their formatting"""
-        # Region headers (Row 1)
-        region_ranges = {
-            'Dubai': 'C1:E1',
-            'Abu Dhabi': 'F1:H1',
-            'Sharjah': 'I1:K1',
-            'KAM': 'L1:N1'
-        }
-        
-        # Unmerge all cells in header rows first
-        for row in [1, 2]:
-            for merge_range in worksheet.merged_cells.ranges.copy():
-                if merge_range.min_row == row:
-                    worksheet.unmerge_cells(str(merge_range))
-
-        # Set region headers and merge cells
-        for reg, cell_range in region_ranges.items():
-            start_col, end_col = cell_range.split(':')[0][0], cell_range.split(':')[1][0]
-            worksheet.merge_cells(cell_range)
-            worksheet[f'{start_col}1'] = reg
-            
-            # Week headers (Row 2)
-            worksheet[f'{start_col}2'] = 'Week'
-            worksheet[f'{chr(ord(start_col) + 1)}2'] = 'Week'
-            worksheet[f'{end_col}2'] = 'Growth/Degrowth %'
-            
-            # Previous headers (Row 3)
-            worksheet[f'{start_col}3'] = '(Previous)'
-            worksheet[f'{chr(ord(start_col) + 1)}3'] = '(Previous to Previous)'
-            
-            # Merge Week cells vertically in row 2-3
-            worksheet.merge_cells(f'{start_col}2:{start_col}3')
-            worksheet.merge_cells(f'{chr(ord(start_col) + 1)}2:{chr(ord(start_col) + 1)}3')
-            worksheet.merge_cells(f'{end_col}2:{end_col}3')
-
-        # Apply formatting to headers
-        for row in [1, 2, 3]:
-            for col in ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N']:
-                cell = worksheet[f'{col}{row}']
-                cell.alignment = openpyxl.styles.Alignment(horizontal='center', 
-                                                         vertical='center',
-                                                         wrap_text=True)
-                cell.font = openpyxl.styles.Font(bold=True)
-                cell.border = openpyxl.styles.Border(
-                    left=openpyxl.styles.Side(style='thin'),
-                    right=openpyxl.styles.Side(style='thin'),
-                    top=openpyxl.styles.Side(style='thin'),
-                    bottom=openpyxl.styles.Side(style='thin')
-                )
-
-    def update_segment_headers(self, worksheet, segment_mappings):
-        """Update segment headers and their parameters"""
-        # Clear existing segment headers and parameters
-        for row in range(4, 23):
-            worksheet[f'A{row}'].value = None
-            worksheet[f'B{row}'].value = None
-
-        # Add segment headers and parameters
-        for segment, details in segment_mappings.items():
-            start_row = details['start']
-            
-            # Write segment header in column A
-            segment_cell = worksheet[f'A{start_row}']
-            segment_cell.value = segment
-            segment_cell.font = openpyxl.styles.Font(bold=True)
-            
-            # Merge segment header cells if segment spans multiple rows
-            if details['end'] > start_row:
-                worksheet.merge_cells(f'A{start_row}:A{details["end"]}')
-            
-            # Write parameters in column B
-            for i, param in enumerate(details['params']):
-                param_cell = worksheet[f'B{start_row + i}']
-                param_cell.value = param
-                
-                # Apply borders to parameter cells
-                param_cell.border = openpyxl.styles.Border(
-                    left=openpyxl.styles.Side(style='thin'),
-                    right=openpyxl.styles.Side(style='thin'),
-                    top=openpyxl.styles.Side(style='thin'),
-                    bottom=openpyxl.styles.Side(style='thin')
-                )
 
     def parse_queries(self, content: str) -> Dict[str, str]:
         """Parse queries from the content string."""
@@ -501,22 +641,9 @@ class ReportGenerator:
         
         return queries
 
-def validate_env_vars():
-    required_vars = [
-        'SSH_HOST', 'SSH_USERNAME', 'SSH_PKEY_PATH',
-        'MYSQL_HOST', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE'
-    ]
-    
-    missing_vars = [var for var in required_vars if not os.getenv(var)]
-    if missing_vars:
-        raise EnvironmentError(f"Missing required environment variables: {', '.join(missing_vars)}")
-
 def main():
     try:
         logger.info("Starting Weekly Report Generation")
-        
-        # Validate environment variables
-        validate_env_vars()
         
         # Check if template exists
         template_path = 'WoW_report_template.xlsx'
@@ -529,13 +656,13 @@ def main():
         
         # Database configuration with SSH tunnel details
         db_config = {
-            'ssh_host': os.getenv('SSH_HOST'),
-            'ssh_username': os.getenv('SSH_USERNAME'),
-            'ssh_pkey_path': os.getenv('SSH_PKEY_PATH'),
-            'mysql_host': os.getenv('MYSQL_HOST'),
-            'mysql_user': os.getenv('MYSQL_USER'),
-            'mysql_password': os.getenv('MYSQL_PASSWORD'),
-            'mysql_database': os.getenv('MYSQL_DATABASE')
+            'ssh_host': '3.28.83.127',
+            'ssh_username': 'ubuntu',
+            'ssh_pkey_path': r"C:\Users\madhu\OneDrive\Documents\Madhu\DB connectivity details\key.pem",
+            'mysql_host': 'eateasily-prod-db.cluster-cory5tgqvyh7.me-central-1.rds.amazonaws.com',
+            'mysql_user': 'developer_ro',
+            'mysql_password': 'E@tEasy5&$#FDs',
+            'mysql_database': 'eateasily'
         }
         
         # Check if query file exists
