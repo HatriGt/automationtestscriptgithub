@@ -6,6 +6,7 @@ import time
 import logging
 import socket
 from datetime import datetime
+import paramiko
 
 # Enable debug logging
 logging.basicConfig(
@@ -54,7 +55,13 @@ def execute_query():
         
         if not os.path.exists(ssh_key_path):
             raise Exception(f"SSH key not found at {ssh_key_path}")
-        
+
+        # Configure SSH client options
+        ssh_config = {
+            'StrictHostKeyChecking': 'no',
+            'UserKnownHostsFile': '/dev/null'
+        }
+            
         server = SSHTunnelForwarder(
             (DB_CONFIG['ssh_host'], 22),
             ssh_username=DB_CONFIG['ssh_username'],
@@ -62,8 +69,8 @@ def execute_query():
             remote_bind_address=(DB_CONFIG['mysql_host'], 3306),
             local_bind_address=('127.0.0.1', 3307),
             set_keepalive=10,
-            allow_agent=False,
-            look_for_keys=False
+            ssh_config=ssh_config,
+            allow_agent=False
         )
         
         print("Starting SSH tunnel...")
@@ -81,7 +88,8 @@ def execute_query():
                 port=server.local_bind_port,
                 user=DB_CONFIG['mysql_user'],
                 password=DB_CONFIG['mysql_password'],
-                database=DB_CONFIG['mysql_database']
+                database=DB_CONFIG['mysql_database'],
+                connection_timeout=30
             )
             
             print("Database connection established")
