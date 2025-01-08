@@ -96,7 +96,7 @@ def send_email(file_path: str):
 Please find the attached report.
 
 Regards,
-AK"""
+Madhumitha"""
         msg.attach(MIMEText(body, 'plain'))
         
         # Attach file
