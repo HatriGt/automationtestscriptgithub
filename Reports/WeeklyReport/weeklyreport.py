@@ -48,7 +48,8 @@ def setup_tunnel():
     # Build SSH command
     cmd = f"ssh -v -N -L 3307:{mysql_host}:3306 {ssh_user}@{ssh_host}"
     
-    logger.info(f"Starting SSH tunnel with command: {cmd}")
+    # Log without sensitive information
+    logger.info("Starting SSH tunnel...")
     
     # Start tunnel in background
     process = subprocess.Popen(
@@ -103,8 +104,12 @@ AK"""
         logger.info("Email sent successfully")
         
     except Exception as e:
-        logger.error(f"Error sending email: {str(e)}")
-        logger.error(traceback.format_exc())
+        # Ensure error messages don't contain sensitive info
+        error_msg = str(e)
+        if any(secret in error_msg for secret in [sender_email, sender_password]):
+            error_msg = "Email error occurred (sensitive information redacted)"
+        logger.error(f"Error sending email: {error_msg}")
+        logger.error("Stack trace omitted for security")
         raise
 
 class ReportGenerator:
@@ -171,13 +176,17 @@ class ReportGenerator:
             return conn
             
         except mysql.connector.Error as e:
-            logger.error(f"MySQL connection error: {str(e)}")
-            logger.error(f"Error code: {e.errno if hasattr(e, 'errno') else 'N/A'}")
-            logger.error(f"SQLSTATE: {e.sqlstate if hasattr(e, 'sqlstate') else 'N/A'}")
+            # Redact sensitive information from error messages
+            error_msg = str(e)
+            if any(secret in error_msg for secret in [os.environ.get('MYSQL_USER', ''), 
+                                                    os.environ.get('MYSQL_PASSWORD', ''),
+                                                    os.environ.get('MYSQL_DATABASE', '')]):
+                error_msg = "Database error occurred (sensitive information redacted)"
+            logger.error(f"MySQL connection error: {error_msg}")
+            logger.error("Error details omitted for security")
             raise
         except Exception as e:
-            logger.error(f"Unexpected error in database connection: {str(e)}")
-            logger.error(traceback.format_exc())
+            logger.error("Unexpected error in database connection (details omitted for security)")
             raise
 
     def __del__(self):
@@ -761,11 +770,10 @@ def main():
                 logger.error(f"Failed to process region {region}: {str(e)}")
                 raise
         
-        # Generate the report with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Generate the report
         output_dir = 'output'
         os.makedirs(output_dir, exist_ok=True)
-        output_file = os.path.join(output_dir, f'WoW_report_{timestamp}.xlsx')
+        output_file = os.path.join(output_dir, 'Weekly Report.xlsx')
         
         # Update Excel template with results
         generator.update_excel_template(template_path, results, output_file)
