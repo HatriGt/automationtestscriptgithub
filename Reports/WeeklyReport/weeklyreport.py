@@ -14,6 +14,11 @@ import time
 import openpyxl.styles
 import subprocess
 import concurrent.futures
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
+from pathlib import Path
 
 # Set up logging with timestamp in filename
 current_time = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -55,6 +60,52 @@ def setup_tunnel():
     # Wait a bit for tunnel to establish
     time.sleep(5)
     return process
+
+def send_email(file_path: str):
+    """Send email with the report as attachment"""
+    try:
+        logger.info("Preparing to send email...")
+        
+        # Email settings
+        sender_email = os.environ['GMAIL_USER']
+        sender_password = os.environ['GMAIL_APP_PASSWORD']
+        recipients = ['ajeeth995@gmail.com', 'ak112121212@gmail.com']
+        
+        # Create message
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = ', '.join(recipients)
+        msg['Subject'] = 'Weekly Report'
+        
+        # Add body
+        body = """Hi Team,
+
+Please find the attached report.
+
+Regards,
+AK"""
+        msg.attach(MIMEText(body, 'plain'))
+        
+        # Attach file
+        with open(file_path, 'rb') as f:
+            attachment = MIMEApplication(f.read(), _subtype='xlsx')
+            attachment.add_header('Content-Disposition', 'attachment', 
+                                filename=os.path.basename(file_path))
+            msg.attach(attachment)
+        
+        # Send email
+        logger.info("Connecting to Gmail SMTP server...")
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            server.starttls()
+            server.login(sender_email, sender_password)
+            server.send_message(msg)
+            
+        logger.info("Email sent successfully")
+        
+    except Exception as e:
+        logger.error(f"Error sending email: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise
 
 class ReportGenerator:
     def __init__(self, db_config: Dict):
@@ -290,7 +341,7 @@ class ReportGenerator:
                         time.sleep(5)  # Wait before retry
                 
             # Execute queries in parallel using ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=5) as executor:
+            with ThreadPoolExecutor(max_workers=7) as executor:
                 # Submit all queries for execution
                 future_to_query = {
                     executor.submit(execute_single_query, (query_name, query)): query_name 
@@ -716,9 +767,18 @@ def main():
                 logger.error(f"Failed to process region {region}: {str(e)}")
                 raise
         
+        # Generate the report
+        output_dir = 'output'
+        os.makedirs(output_dir, exist_ok=True)
+        output_file = os.path.join(output_dir, f'WoW_report_{datetime.now().strftime("%Y%m%d")}.xlsx')
+        
         # Update Excel template with results
         generator.update_excel_template(template_path, results)
-        logger.info("Weekly report generation completed successfully")
+        
+        # Send email with the report
+        send_email(output_file)
+        
+        logger.info("Weekly report generation and email sending completed successfully")
         
     except Exception as e:
         logger.error("Error during weekly report generation")

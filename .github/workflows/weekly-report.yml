@@ -46,6 +46,8 @@ jobs:
         MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}
         SSH_HOST: ${{ secrets.SSH_HOST }}
         SSH_USERNAME: ${{ secrets.SSH_USERNAME }}
+        GMAIL_USER: ${{ secrets.GMAIL_USER }}
+        GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
       run: |
         cd Reports/WeeklyReport
         python weeklyreport.py
