@@ -13,6 +13,12 @@ import traceback
 import time
 import openpyxl.styles
 import subprocess
+import concurrent.futures
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
+from pathlib import Path
 
 # Set up logging with timestamp in filename
 current_time = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -42,7 +48,8 @@ def setup_tunnel():
     # Build SSH command
     cmd = f"ssh -v -N -L 3307:{mysql_host}:3306 {ssh_user}@{ssh_host}"
     
-    logger.info(f"Starting SSH tunnel with command: {cmd}")
+    # Log without sensitive information
+    logger.info("Starting SSH tunnel...")
     
     # Start tunnel in background
     process = subprocess.Popen(
@@ -54,6 +61,68 @@ def setup_tunnel():
     # Wait a bit for tunnel to establish
     time.sleep(5)
     return process
+
+def send_email(file_path: str):
+    """Send email with the report as attachment"""
+    try:
+        logger.info("Preparing to send email...")
+        
+        # Email settings
+        sender_email = os.environ['GMAIL_USER']
+        sender_password = os.environ['GMAIL_APP_PASSWORD']
+        
+        # Get recipients from environment variable
+        try:
+            recipients_str = os.environ['WEEKLY_REPORT_RECEPIENTS']
+            # Clean up the string and extract emails
+            recipients = [email.strip().strip("'[]") for email in recipients_str.replace(' ', '').split(',')]
+            recipients = [email for email in recipients if '@' in email]  # Validate emails
+            logger.info(f"Found {len(recipients)} recipients")
+            if not recipients:
+                raise ValueError("No valid email addresses found in WEEKLY_REPORT_RECEPIENTS")
+        except KeyError:
+            logger.error("WEEKLY_REPORT_RECEPIENTS environment variable not set")
+            raise
+        
+        # Create message
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = ', '.join(recipients)
+        msg['Subject'] = 'Weekly Report'
+        
+        # Add body
+        body = """Hi Team,
+
+Please find the attached report.
+
+Regards,
+Madhumitha"""
+        msg.attach(MIMEText(body, 'plain'))
+        
+        # Attach file
+        with open(file_path, 'rb') as f:
+            attachment = MIMEApplication(f.read(), _subtype='xlsx')
+            attachment.add_header('Content-Disposition', 'attachment', 
+                                filename=os.path.basename(file_path))
+            msg.attach(attachment)
+        
+        # Send email
+        logger.info("Connecting to Gmail SMTP server...")
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            server.starttls()
+            server.login(sender_email, sender_password)
+            server.send_message(msg)
+            
+        logger.info("Email sent successfully")
+        
+    except Exception as e:
+        # Ensure error messages don't contain sensitive info
+        error_msg = str(e)
+        if any(secret in error_msg for secret in [sender_email, sender_password] + recipients):
+            error_msg = "Email error occurred (sensitive information redacted)"
+        logger.error(f"Error sending email: {error_msg}")
+        logger.error("Stack trace omitted for security")
+        raise
 
 class ReportGenerator:
     def __init__(self, db_config: Dict):
@@ -119,13 +188,17 @@ class ReportGenerator:
             return conn
             
         except mysql.connector.Error as e:
-            logger.error(f"MySQL connection error: {str(e)}")
-            logger.error(f"Error code: {e.errno if hasattr(e, 'errno') else 'N/A'}")
-            logger.error(f"SQLSTATE: {e.sqlstate if hasattr(e, 'sqlstate') else 'N/A'}")
+            # Redact sensitive information from error messages
+            error_msg = str(e)
+            if any(secret in error_msg for secret in [os.environ.get('MYSQL_USER', ''), 
+                                                    os.environ.get('MYSQL_PASSWORD', ''),
+                                                    os.environ.get('MYSQL_DATABASE', '')]):
+                error_msg = "Database error occurred (sensitive information redacted)"
+            logger.error(f"MySQL connection error: {error_msg}")
+            logger.error("Error details omitted for security")
             raise
         except Exception as e:
-            logger.error(f"Unexpected error in database connection: {str(e)}")
-            logger.error(traceback.format_exc())
+            logger.error("Unexpected error in database connection (details omitted for security)")
             raise
 
     def __del__(self):
@@ -270,16 +343,17 @@ class ReportGenerator:
             logger.info(f"Starting to process region: {region}")
             logger.info(f"Number of queries to process: {len(queries)}")
             
-            for query_name, query in queries.items():
-                logger.info(f"Processing query '{query_name}' for region '{region}'...")
+            def execute_single_query(query_tuple):
+                query_name, query = query_tuple
                 max_retries = 3
                 retry_count = 0
                 
                 while retry_count < max_retries:
                     try:
-                        results[query_name] = self.execute_query(query, region)
+                        logger.info(f"Processing query '{query_name}' for region '{region}'...")
+                        result = self.execute_query(query, region)
                         logger.info(f"Successfully completed query '{query_name}' for region '{region}'")
-                        break
+                        return query_name, result
                     except Exception as e:
                         retry_count += 1
                         logger.error(f"Attempt {retry_count} failed for query '{query_name}' in region '{region}': {str(e)}")
@@ -287,6 +361,24 @@ class ReportGenerator:
                             raise
                         time.sleep(5)  # Wait before retry
                 
+            # Execute queries in parallel using ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=7) as executor:
+                # Submit all queries for execution
+                future_to_query = {
+                    executor.submit(execute_single_query, (query_name, query)): query_name 
+                    for query_name, query in queries.items()
+                }
+                
+                # Collect results as they complete
+                for future in concurrent.futures.as_completed(future_to_query):
+                    query_name = future_to_query[future]
+                    try:
+                        query_name, result = future.result()
+                        results[query_name] = result
+                    except Exception as e:
+                        logger.error(f"Query '{query_name}' failed for region '{region}': {str(e)}")
+                        raise
+            
             logger.info(f"Completed processing all queries for region: {region}")
             return region, results
         except Exception as e:
@@ -295,7 +387,7 @@ class ReportGenerator:
             logger.error(traceback.format_exc())
             raise
 
-    def update_excel_template(self, template_path: str, results: Dict[str, Dict[str, pd.DataFrame]]):
+    def update_excel_template(self, template_path: str, results: Dict[str, Dict[str, pd.DataFrame]], output_file: str):
         try:
             logger.info(f"Opening Excel template: {template_path}")
             workbook = openpyxl.load_workbook(template_path)
@@ -306,15 +398,9 @@ class ReportGenerator:
                 logger.info(f"\nProcessing region: {region}")
                 self._process_query_results(worksheet, region_results, region)
 
-            # Save the updated workbook
-            output_dir = 'output'
-            os.makedirs(output_dir, exist_ok=True)
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            output_path = os.path.join(output_dir, f'WoW_report_{timestamp}.xlsx')
-            
             try:
-                workbook.save(output_path)
-                logger.info(f"Excel file successfully saved to {output_path}")
+                workbook.save(output_file)
+                logger.info(f"Excel file successfully saved to {output_file}")
             except Exception as e:
                 logger.error(f"Error saving workbook: {str(e)}")
                 raise
@@ -696,9 +782,24 @@ def main():
                 logger.error(f"Failed to process region {region}: {str(e)}")
                 raise
         
+        # Generate the report
+        output_dir = 'output'
+        os.makedirs(output_dir, exist_ok=True)
+        output_file = os.path.join(output_dir, 'Weekly Report.xlsx')
+        
         # Update Excel template with results
-        generator.update_excel_template(template_path, results)
-        logger.info("Weekly report generation completed successfully")
+        generator.update_excel_template(template_path, results, output_file)
+        
+        # Verify file exists before sending
+        if not os.path.exists(output_file):
+            raise FileNotFoundError(f"Generated report not found at: {output_file}")
+            
+        logger.info(f"Report generated successfully at: {output_file}")
+        
+        # Send email with the report
+        send_email(output_file)
+        
+        logger.info("Weekly report generation and email sending completed successfully")
         
     except Exception as e:
         logger.error("Error during weekly report generation")

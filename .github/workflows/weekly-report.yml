@@ -2,7 +2,7 @@ name: Weekly Report Generation
 
 on:
   schedule:
-    - cron: '0 4 * * 1-5'  # Runs every weekday (Mon-Fri) at 8 AM UAE time (4 AM UTC)
+    - cron: '0 5 * * 1'  # Runs every Monday at 9 AM Dubai time (5 AM UTC)
   workflow_dispatch:        # Allows manual trigger
 
 jobs:
@@ -46,6 +46,9 @@ jobs:
         MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}
         SSH_HOST: ${{ secrets.SSH_HOST }}
         SSH_USERNAME: ${{ secrets.SSH_USERNAME }}
+        GMAIL_USER: ${{ secrets.GMAIL_USER }}
+        GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        WEEKLY_REPORT_RECEPIENTS: ${{ secrets.WEEKLY_REPORT_RECEPIENTS }}
       run: |
         cd Reports/WeeklyReport
         python weeklyreport.py
@@ -54,5 +57,5 @@ jobs:
       uses: actions/upload-artifact@v3
       with:
         name: weekly-report
-        path: Reports/WeeklyReport/output/WoW_report_*.xlsx
+        path: Reports/WeeklyReport/output/Weekly Report.xlsx
         retention-days: 30 
