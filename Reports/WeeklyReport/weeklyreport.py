@@ -69,7 +69,7 @@ def send_email(file_path: str):
         # Email settings
         sender_email = os.environ['GMAIL_USER']
         sender_password = os.environ['GMAIL_APP_PASSWORD']
-        recipients = ['ajeeth995@gmail.com', 'ak112121212@gmail.com']
+        recipients = ['madhumitha@eateasily.com']
         
         # Create message
         msg = MIMEMultipart()
