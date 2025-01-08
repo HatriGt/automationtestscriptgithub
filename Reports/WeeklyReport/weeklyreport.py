@@ -366,7 +366,7 @@ class ReportGenerator:
             logger.error(traceback.format_exc())
             raise
 
-    def update_excel_template(self, template_path: str, results: Dict[str, Dict[str, pd.DataFrame]]):
+    def update_excel_template(self, template_path: str, results: Dict[str, Dict[str, pd.DataFrame]], output_file: str):
         try:
             logger.info(f"Opening Excel template: {template_path}")
             workbook = openpyxl.load_workbook(template_path)
@@ -377,15 +377,9 @@ class ReportGenerator:
                 logger.info(f"\nProcessing region: {region}")
                 self._process_query_results(worksheet, region_results, region)
 
-            # Save the updated workbook
-            output_dir = 'output'
-            os.makedirs(output_dir, exist_ok=True)
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            output_path = os.path.join(output_dir, f'WoW_report_{timestamp}.xlsx')
-            
             try:
-                workbook.save(output_path)
-                logger.info(f"Excel file successfully saved to {output_path}")
+                workbook.save(output_file)
+                logger.info(f"Excel file successfully saved to {output_file}")
             except Exception as e:
                 logger.error(f"Error saving workbook: {str(e)}")
                 raise
@@ -767,13 +761,20 @@ def main():
                 logger.error(f"Failed to process region {region}: {str(e)}")
                 raise
         
-        # Generate the report
+        # Generate the report with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_dir = 'output'
         os.makedirs(output_dir, exist_ok=True)
-        output_file = os.path.join(output_dir, f'WoW_report_{datetime.now().strftime("%Y%m%d")}.xlsx')
+        output_file = os.path.join(output_dir, f'WoW_report_{timestamp}.xlsx')
         
         # Update Excel template with results
-        generator.update_excel_template(template_path, results)
+        generator.update_excel_template(template_path, results, output_file)
+        
+        # Verify file exists before sending
+        if not os.path.exists(output_file):
+            raise FileNotFoundError(f"Generated report not found at: {output_file}")
+            
+        logger.info(f"Report generated successfully at: {output_file}")
         
         # Send email with the report
         send_email(output_file)
