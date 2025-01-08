@@ -70,7 +70,19 @@ def send_email(file_path: str):
         # Email settings
         sender_email = os.environ['GMAIL_USER']
         sender_password = os.environ['GMAIL_APP_PASSWORD']
-        recipients = ['madhumitha@eateasily.com']
+        
+        # Get recipients from environment variable
+        try:
+            recipients_str = os.environ['WEEKLY_REPORT_RECEPIENTS']
+            # Clean up the string and extract emails
+            recipients = [email.strip().strip("'[]") for email in recipients_str.replace(' ', '').split(',')]
+            recipients = [email for email in recipients if '@' in email]  # Validate emails
+            logger.info(f"Found {len(recipients)} recipients")
+            if not recipients:
+                raise ValueError("No valid email addresses found in WEEKLY_REPORT_RECEPIENTS")
+        except KeyError:
+            logger.error("WEEKLY_REPORT_RECEPIENTS environment variable not set")
+            raise
         
         # Create message
         msg = MIMEMultipart()
@@ -106,7 +118,7 @@ AK"""
     except Exception as e:
         # Ensure error messages don't contain sensitive info
         error_msg = str(e)
-        if any(secret in error_msg for secret in [sender_email, sender_password]):
+        if any(secret in error_msg for secret in [sender_email, sender_password] + recipients):
             error_msg = "Email error occurred (sensitive information redacted)"
         logger.error(f"Error sending email: {error_msg}")
         logger.error("Stack trace omitted for security")
