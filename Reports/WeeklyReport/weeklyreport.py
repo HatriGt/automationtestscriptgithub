@@ -362,7 +362,7 @@ class ReportGenerator:
                         time.sleep(5)  # Wait before retry
                 
             # Execute queries in parallel using ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=7) as executor:
+            with ThreadPoolExecutor(max_workers=9) as executor:
                 # Submit all queries for execution
                 future_to_query = {
                     executor.submit(execute_single_query, (query_name, query)): query_name 
