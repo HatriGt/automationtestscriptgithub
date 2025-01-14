@@ -49,6 +49,7 @@ jobs:
         SSH_USERNAME: ${{ secrets.SSH_USERNAME }}
         GMAIL_USER: ${{ secrets.GMAIL_USER }}
         GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        WEEKLY_REPORT_RECEPIENTS: ${{ vars.WEEKLY_REPORT_RECEPIENTS }}
       run: |
         cd Reports/WeeklyReport
         python weeklyreport.py
