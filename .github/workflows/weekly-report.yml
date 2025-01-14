@@ -9,6 +9,7 @@ jobs:
   generate-report:
     runs-on: ubuntu-latest
     timeout-minutes: 300
+    environment: production
     
     steps:
     - uses: actions/checkout@v3
@@ -48,7 +49,6 @@ jobs:
         SSH_USERNAME: ${{ secrets.SSH_USERNAME }}
         GMAIL_USER: ${{ secrets.GMAIL_USER }}
         GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-        WEEKLY_REPORT_RECEPIENTS: ${{ env.WEEKLY_REPORT_RECEPIENTS }}
       run: |
         cd Reports/WeeklyReport
         python weeklyreport.py
